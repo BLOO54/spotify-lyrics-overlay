@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.6.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.7.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.6.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.7.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -103,7 +103,11 @@ The header shows which sync mode is in use:
   where the whole line lights up with a progress bar underneath.
 
 Lyrics come from **[LRCLIB](https://lrclib.net)**, a free, community-made lyrics database.
-Most songs only have line timing there. If a song isn't in LRCLIB, the overlay says "No lyrics found".
+Most songs only have line timing there.
+
+**Word timing guess** (Settings → Lyrics & translation) decides how the words are spread when only line timing
+exists: **Smart** (default) gives each word time for the syllables actually sung (mora for Japanese, one per
+Korean/Chinese character) and adds a short breath after commas; **Simple** shares the time by number of letters. If a song isn't in LRCLIB, the overlay says "No lyrics found".
 
 ### 🎨 Settings at a glance
 Open Settings (**Ctrl+Alt+O**, or right-click the tray icon). There are four tabs:

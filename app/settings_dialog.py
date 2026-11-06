@@ -43,6 +43,8 @@ ART_CHOICES = [("auto", "Auto – small when the overlay is narrow"), ("left", "
 TIME_CHOICES = [("off", "Off"), ("left", "Time left  (-2:13)"), ("elapsed", "Elapsed / total  (1:32 / 3:45)")]
 TRANSLATION_LAYOUTS = [("big", "Translation big (karaoke), original small underneath"),
                        ("small", "Original big, translation small underneath")]
+WORD_TIMING_CHOICES = [("syllables", "Smart – by syllables (recommended)"),
+                       ("letters", "Simple – by number of letters")]
 PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
              ("deepl", "DeepL – better quality, needs a free API key")]
 
@@ -315,6 +317,14 @@ class SettingsDialog(QDialog):
         self._w["estimate_word_timing"] = self._check(
             "Estimate word timing when only line timing exists", "estimate_word_timing")
         f.addRow(self._w["estimate_word_timing"])
+        self._w["word_timing_mode"] = wt = QComboBox()
+        for key, label in WORD_TIMING_CHOICES:
+            wt.addItem(label, key)
+        wt.setCurrentIndex([k for k, _ in WORD_TIMING_CHOICES].index(self.s.word_timing_mode))
+        wt.currentIndexChanged.connect(lambda i: self._set("word_timing_mode", wt.itemData(i)))
+        f.addRow("Word timing guess", wt)
+        f.addRow(_hint("Only used for songs without real word timing. Smart gives each word time "
+                       "for the syllables you actually sing, and adds a short breath after commas."))
         self._w["sync_offset_ms"] = self._spin(-10000, 10000, "sync_offset_ms", " ms", step=50)
         self._w["sync_offset_ms"].setToolTip("Positive = lyrics appear earlier. Use if lyrics feel late.")
         f.addRow("Sync adjustment (all songs)", self._w["sync_offset_ms"])

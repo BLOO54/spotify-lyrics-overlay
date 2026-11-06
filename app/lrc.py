@@ -236,12 +236,63 @@ def parse_lrc(text: str) -> list[Line]:
     return lines
 
 
-def estimate_word_timing(line: Line, sing_end: float | None = None) -> None:
+# --------------------------------------------------------------------------
+# Guessing word timing
+#
+# "letters" (simple): each word gets time in proportion to its length.
+# "syllables" (smart): each word gets time in proportion to how many sounds you
+#   actually sing - syllables for English & co, mora for Japanese kana, one
+#   syllable per Korean/Chinese character - plus a short breath after commas and
+#   full stops.
+
+_VOWELS = "aeiouyàáâãäåæèéêëìíîïòóôõöøùúûüýÿœ"
+_SMALL_KANA = set("ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ")
+_PAUSE_PUNCT = set(",.;:!?、。，．！？…")
+SECONDS_PER_SYLLABLE = 0.26     # a comfortable singing pace
+PAUSE_SYLLABLES = 0.6           # a comma/full stop "costs" this much singing time as a breath
+
+
+def syllables(word: str) -> float:
+    """Rough number of sung syllables in a word (any language)."""
+    count = 0.0
+    latin = ""
+    for ch in word:
+        o = ord(ch)
+        if 0x3040 <= o <= 0x30FF or 0xFF66 <= o <= 0xFF9F:          # kana: one mora each
+            if ch not in _SMALL_KANA:
+                count += 1
+        elif 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF:        # kanji / hanzi
+            count += 1.6 if _has_kana(word) else 1.0              # Japanese kanji often read as 2 mora
+        elif 0xAC00 <= o <= 0xD7AF:                                # Hangul block = 1 syllable
+            count += 1
+        elif ch.isalpha():
+            latin += ch.lower()
+        elif ch.isdigit():
+            count += 1
+    if latin:
+        groups = re.findall(f"[{_VOWELS}]+", latin)
+        n = len(groups)
+        # silent English "e" at the end: "make", "love" (but not "little", "the", "be")
+        if n > 1 and latin.endswith("e") and not latin.endswith(("le", "ee", "ye")) and latin[-2] not in _VOWELS:
+            n -= 1
+        # vowels next to each other that are usually two syllables: go-ing, be-ing, ra-di-o, pi-a-no
+        if re.search(f"[{_VOWELS}]ing$", latin):
+            n += 1
+        n += len(re.findall(r"(?<![qg])(?:ia|io|eo|ua|uo)", latin))
+        count += max(1, n)
+    return max(count, 0.5)
+
+
+def _has_kana(text: str) -> bool:
+    return any(0x3040 <= ord(c) <= 0x30FF for c in text)
+
+
+def estimate_word_timing(line: Line, sing_end: float | None = None, mode: str = "syllables") -> None:
     """Guess per-word timing for a line that only has a start time.
 
-    We spread the words over the time the line is likely being sung,
-    giving longer words more time. If the gap to the next line is long
-    (e.g. an instrumental pause), we don't stretch the words across all of it.
+    We spread the words over the time the line is likely being sung. If the gap
+    to the next line is long (e.g. an instrumental pause), we don't stretch the
+    words across all of it.
     """
     pieces = split_tokens(line.text)
     if not pieces:
@@ -249,39 +300,48 @@ def estimate_word_timing(line: Line, sing_end: float | None = None) -> None:
         return
     tokens = [p for p, _ in pieces]
     gap = max(line.end - line.start, 0.2)
-    weights = [len(t) + 1.5 for t in tokens]
-    total = sum(weights)
-    # ~0.075 s per weight unit is a comfortable singing pace; never longer than the gap
-    sing = min(gap * 0.95, max(0.8, total * 0.075))
+
+    if mode == "letters":
+        weights = [len(t) + 1.5 for t in tokens]
+        pauses = [0.0] * len(tokens)
+        sing = min(gap * 0.95, max(0.8, sum(weights) * 0.075))
+    else:
+        weights = [syllables(t) + 0.25 for t in tokens]
+        # a breath after punctuation, except after the last word
+        pauses = [PAUSE_SYLLABLES if (t[-1] in _PAUSE_PUNCT and i < len(tokens) - 1) else 0.0
+                  for i, t in enumerate(tokens)]
+        sing = min(gap * 0.95, max(0.8, (sum(weights) + sum(pauses)) * SECONDS_PER_SYLLABLE))
+
     if sing_end is not None and line.start < sing_end <= line.end + 0.01:
         sing = sing_end - line.start          # match the time the original words take
+    total = sum(weights) + sum(pauses)
     words = []
     t = line.start
-    for (tok, space_after), w in zip(pieces, weights):
+    for (tok, space_after), w, pause in zip(pieces, weights, pauses):
         d = sing * w / total
         words.append(Word(tok, t, t + d, gap=space_after))
-        t += d
+        t += d + sing * pause / total
     line.words = words
     line.word_timed = False
 
 
-def timed_copy(line: Line, text: str) -> Line:
+def timed_copy(line: Line, text: str, mode: str = "syllables") -> Line:
     """A line with different text (e.g. a translation) sung over the same time as `line`."""
     copy = Line(line.start, line.end, text)
     sing_end = line.words[-1].end if line.words else None
-    estimate_word_timing(copy, sing_end)
+    estimate_word_timing(copy, sing_end, mode)
     return copy
 
 
 def build_lyrics(synced_text: str | None, plain_text: str | None = None,
                  instrumental: bool = False, estimate_words: bool = True,
-                 source: str = "") -> Lyrics:
+                 source: str = "", estimate_mode: str = "syllables") -> Lyrics:
     lines = parse_lrc(synced_text) if synced_text else []
     has_words = any(ln.word_timed for ln in lines)
     if lines and estimate_words:
         for ln in lines:
             if not ln.word_timed:
-                estimate_word_timing(ln)
+                estimate_word_timing(ln, mode=estimate_mode)
     return Lyrics(
         lines=lines,
         synced=bool(lines),

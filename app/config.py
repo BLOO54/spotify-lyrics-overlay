@@ -70,6 +70,7 @@ class Settings:
     visible: bool = True
     hide_when_paused: bool = False
     estimate_word_timing: bool = True    # karaoke-guess when real word timing isn't available
+    word_timing_mode: str = "syllables"  # how to guess: "syllables" (smart) | "letters" (simple)
     sync_offset_ms: int = 0              # + makes lyrics appear earlier
     spotify_only: bool = True
     # Translation (off by default; only used for songs not in your language)
@@ -132,6 +133,8 @@ class Settings:
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
+        if self.word_timing_mode not in ("syllables", "letters"):
+            self.word_timing_mode = "syllables"
         if self.long_lines not in ("widen", "shrink", "wrap"):
             self.long_lines = "widen"
         from .hotkeys import ACTIONS, is_valid, normalise

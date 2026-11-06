@@ -478,7 +478,8 @@ class Controller(QObject):
         if result.instrumental:
             self.overlay.set_lyrics(None, "Instrumental ♪")
         elif result.synced:
-            ly = build_lyrics(result.synced, result.plain, False, self.s.estimate_word_timing, result.source)
+            ly = build_lyrics(result.synced, result.plain, False, self.s.estimate_word_timing, result.source,
+                              estimate_mode=self.s.word_timing_mode)
             if ly.synced:
                 self.overlay.set_lyrics(ly)
                 self._request_extras(ly)

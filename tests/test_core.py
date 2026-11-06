@@ -436,3 +436,48 @@ def test_song_sync(tmp_path):
     assert SongSync(p).get("Song", "Artist") == 0
     (tmp_path / "bad.json").write_text("{nope", encoding="utf-8")
     assert SongSync(tmp_path / "bad.json").get("a", "b") == 0     # corrupt file: no crash
+
+
+# ---------------------------------------------------------------- smart (syllable) word timing
+def test_syllable_counts():
+    S = lrc.syllables
+    assert S("beautiful") == 3
+    assert S("through") == 1
+    assert S("make") == 1 and S("love") == 1          # silent e
+    assert S("little") == 2 and S("the") == 1 and S("be") == 1
+    assert S("going") == 2 and S("I'm") == 1
+    assert S("corazón") == 3                         # accented vowels count
+    assert S("きょう") == 2                            # small ょ doesn't add a mora
+    assert S("がっこう") == 4                          # っ counts
+    assert S("東京へ") == 1.6 * 2 + 1                  # kanji in a Japanese word ~1.6 mora
+    assert S("사랑해") == 3
+    assert S("我爱你") == 3                             # Chinese: one syllable per character
+    assert S("...") == 0.5                            # never zero
+
+
+def test_smart_timing_gives_long_words_more_time():
+    lines = lrc.parse_lrc("[00:10.00]through beautiful\n[00:20.00]x\n")
+    lrc.estimate_word_timing(lines[0], mode="syllables")
+    a, b = lines[0].words
+    assert (b.end - b.start) > 2.5 * (a.end - a.start)   # 3 syllables vs 1
+    lines2 = lrc.parse_lrc("[00:10.00]through beautiful\n[00:20.00]x\n")
+    lrc.estimate_word_timing(lines2[0], mode="letters")
+    a2, b2 = lines2[0].words
+    assert (b2.end - b2.start) < 1.5 * (a2.end - a2.start)   # letters: much closer together
+
+
+def test_smart_timing_breathes_after_commas():
+    ln = lrc.parse_lrc("[00:10.00]stay, with me\n[00:20.00]x\n")[0]
+    lrc.estimate_word_timing(ln, mode="syllables")
+    stay, with_, me = ln.words
+    assert with_.start - stay.end > 0.1                   # short pause after the comma
+    assert abs(me.start - with_.end) < 1e-9               # no pause without punctuation
+    assert me.end <= ln.end
+
+
+def test_smart_timing_respects_span_and_short_lines():
+    ln = lrc.parse_lrc("[00:10.00]one two three four five six seven eight\n[00:11.00]x\n")[0]
+    lrc.estimate_word_timing(ln)                          # only 1 s until the next line
+    assert ln.words[0].start == 10.0 and ln.words[-1].end <= 11.0
+    ly = lrc.build_lyrics("[00:01.00]hello there\n[00:05.00]x\n", estimate_mode="letters")
+    assert ly.lines[0].words and not ly.lines[0].word_timed

@@ -155,10 +155,10 @@ class OverlayWindow(QWidget):
         line = self.lyrics.lines[i]
         if not self._swap() or i not in self.extras.translations:
             return line
-        key = (i, id(self.extras), self.s.estimate_word_timing)
+        key = (i, id(self.extras), self.s.estimate_word_timing, self.s.word_timing_mode)
         cache = self.__dict__.setdefault("_swap_cache", {})
         if key not in cache:
-            copy = timed_copy(line, self.extras.translations[i])
+            copy = timed_copy(line, self.extras.translations[i], self.s.word_timing_mode)
             if not self.s.estimate_word_timing:
                 copy.words = []
             if len(cache) > 400:
