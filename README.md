@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.5.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.6.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.5.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.6.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -73,6 +73,11 @@ The app runs in the **system tray** (the small icons at the bottom-right of the 
 | **Ctrl + Alt + ←** | This song's lyrics earlier (−250 ms), remembered for this song |
 | **Ctrl + Alt + →** | This song's lyrics later (+250 ms), remembered for this song |
 | **Ctrl + Alt + V** | Try another lyrics version for this song (remembered) |
+
+**Change the shortcuts:** Settings → **Shortcuts**. Click a button, then press the keys you want
+(for example Ctrl+Shift+L, or a single key like F8). Backspace turns a shortcut off, Esc cancels.
+"Use shortcuts without Alt" switches them all to Ctrl+Shift + the same key. If another program already
+uses a combination, the Shortcuts tab tells you so you can pick a different one.
 
 ### 🖱️ Moving the overlay
 1. Turn **click-through OFF** (Ctrl+Alt+K).
@@ -156,7 +161,7 @@ For a Japanese demo song (to try translation/romaji), run `SpotifyLyricsOverlay.
 | Overlay hidden behind the game | Set the game to **borderless windowed**. |
 | Can't click or move the overlay | Click-through is on. Press **Ctrl+Alt+K**. |
 | Can't find the app | Look in the system tray (^ arrow bottom-right). |
-| Shortcut keys don't work | Another program already uses them. Use the tray menu instead. |
+| Shortcut keys don't work | Another program already uses them, or a key on your keyboard is broken. Change them in Settings → Shortcuts. |
 | "Can't reach the lyrics service" | Check your internet. The app retries automatically every 15 seconds. |
 | Translation stopped appearing | You've probably used today's free MyMemory allowance. Add an email or a DeepL key in Settings. |
 | Japanese shows as boxes | Install the Japanese language pack: Windows Settings → Time & language → Language → Add Japanese. |

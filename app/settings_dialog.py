@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox,
                                QFontComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
-from . import APP_NAME, APP_VERSION
+from . import APP_NAME, APP_VERSION, hotkeys
 from .config import POSITIONS, Settings
 from .themes import CUSTOM, HIGHLIGHT_STYLES, THEME_KEYS, THEMES, apply_theme
 from .translate import LANGUAGES, romaji_available
@@ -46,11 +46,87 @@ TRANSLATION_LAYOUTS = [("big", "Translation big (karaoke), original small undern
 PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
              ("deepl", "DeepL – better quality, needs a free API key")]
 
-HOTKEY_HELP = (
-    "<b>Ctrl+Alt+L</b> show / hide overlay &nbsp;·&nbsp; <b>Ctrl+Alt+K</b> click-through on/off<br>"
-    "<b>Ctrl+Alt+O</b> open settings &nbsp;·&nbsp; <b>Ctrl+Alt+V</b> try another lyrics version<br>"
-    "<b>Ctrl+Alt+← / →</b> this song's lyrics earlier / later (remembered per song)"
-)
+def hotkey_help(s) -> str:
+    rows = [f"<b>{getattr(s, f)}</b> {label.lower()}" for f, label, _ in hotkeys.ACTIONS if getattr(s, f)]
+    return " &nbsp;·&nbsp; ".join(rows) if rows else "No keyboard shortcuts set – use the tray icon menu."
+
+
+class HotkeyButton(QPushButton):
+    """Click it, then press the key combination you want."""
+    captured = Signal(str)        # new shortcut text ("" = turned off)
+    capture_started = Signal()
+    capture_finished = Signal()
+
+    def __init__(self, text: str):
+        super().__init__()
+        self._value = text
+        self._capturing = False
+        self.setMinimumWidth(170)
+        self.clicked.connect(self._start)
+        self._show()
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, text: str):
+        self._value = text
+        self._show()
+
+    def _show(self):
+        if self._capturing:
+            self.setText("Press keys…  (Esc = cancel)")
+            self.setStyleSheet("background:#3b2a66; border:1px solid #a855f7;")
+        else:
+            self.setText(self._value or "(off)")
+            self.setStyleSheet("")
+
+    def _start(self):
+        self._capturing = True
+        self._show()
+        self.capture_started.emit()
+        self.setFocus()
+        self.grabKeyboard()
+
+    def _stop(self):
+        self._capturing = False
+        self.releaseKeyboard()
+        self._show()
+        self.capture_finished.emit()
+
+    def focusOutEvent(self, e):
+        if self._capturing:
+            self._stop()
+        super().focusOutEvent(e)
+
+    def keyPressEvent(self, e):
+        if not self._capturing:
+            return super().keyPressEvent(e)
+        key = int(e.key())
+        if key == hotkeys.QT_ESCAPE:
+            self._stop()
+            return
+        if key == hotkeys.QT_BACKSPACE:
+            self._value = ""
+            self.captured.emit("")
+            self._stop()
+            return
+        m = e.modifiers()
+        text = hotkeys.from_qt(
+            key,
+            bool(m & Qt.KeyboardModifier.ControlModifier),
+            bool(m & Qt.KeyboardModifier.AltModifier),
+            bool(m & Qt.KeyboardModifier.ShiftModifier),
+            bool(m & Qt.KeyboardModifier.MetaModifier),
+            bool(m & Qt.KeyboardModifier.KeypadModifier),
+        )
+        if text is None:
+            return                      # just a modifier so far - keep waiting
+        if not hotkeys.is_valid(text):
+            self.setText("Add Ctrl / Shift / Win (or use an F-key)")
+            return
+        self._value = hotkeys.normalise(text)
+        self.captured.emit(self._value)
+        self._stop()
 
 
 def _hint(text: str) -> QLabel:
@@ -86,6 +162,8 @@ class ColorButton(QPushButton):
 
 class SettingsDialog(QDialog):
     changed = Signal()
+    capture_started = Signal()     # a shortcut button is waiting for keys
+    capture_finished = Signal()    # done - shortcuts should be registered again
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -104,11 +182,12 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._layout_tab(), "Layout")
         tabs.addTab(self._lyrics_tab(), "Lyrics && translation")
         tabs.addTab(self._behaviour_tab(), "Behaviour")
+        tabs.addTab(self._shortcuts_tab(), "Shortcuts")
 
-        keys = QLabel(HOTKEY_HELP)
-        keys.setWordWrap(True)
-        keys.setStyleSheet("color:#b8b8cc; font-size:11px; padding:4px;")
-        root.addWidget(keys)
+        self.keys_label = QLabel(hotkey_help(self.s))
+        self.keys_label.setWordWrap(True)
+        self.keys_label.setStyleSheet("color:#b8b8cc; font-size:11px; padding:4px;")
+        root.addWidget(self.keys_label)
 
         btns = QHBoxLayout()
         ver = QLabel(f"v{APP_VERSION} · lyrics from LRCLIB.net")
@@ -303,6 +382,64 @@ class SettingsDialog(QDialog):
             f.addRow(self._w[key])
         return w
 
+    def _shortcuts_tab(self):
+        w, f = self._page()
+        f.addRow(_hint("Click a button, then press the keys you want (for example Ctrl+Shift+L, or just F8). "
+                       "Backspace turns a shortcut off. Esc cancels. Shortcuts work even while a game is focused."))
+        self.hk_buttons = {}
+        for field, label, _ in hotkeys.ACTIONS:
+            b = HotkeyButton(getattr(self.s, field))
+            b.captured.connect(lambda text, fld=field: self._set_hotkey(fld, text))
+            b.capture_started.connect(self.capture_started)
+            b.capture_finished.connect(self.capture_finished)
+            self.hk_buttons[field] = b
+            f.addRow(label, b)
+        self.hk_problem = _hint("")
+        self.hk_problem.setStyleSheet("color:#fca5a5; font-size:11px;")
+        f.addRow(self.hk_problem)
+        no_alt = QPushButton("Use shortcuts without Alt (Ctrl+Shift + …)")
+        no_alt.clicked.connect(self._no_alt_preset)
+        f.addRow(no_alt)
+        defaults = QPushButton("Restore default shortcuts")
+        defaults.clicked.connect(self._default_hotkeys)
+        f.addRow(defaults)
+        return w
+
+    def _set_hotkey(self, field: str, text: str):
+        # one key combination can only do one thing: clear it from any other action
+        if text:
+            for other, b in self.hk_buttons.items():
+                if other != field and getattr(self.s, other) == text:
+                    setattr(self.s, other, "")
+                    b.set_value("")
+        setattr(self.s, field, text)
+        self.s.clamp()
+        self.s.save()
+        self.keys_label.setText(hotkey_help(self.s))
+
+    def _apply_hotkeys(self, mapping: dict):
+        for field, text in mapping.items():
+            setattr(self.s, field, text)
+            self.hk_buttons[field].set_value(text)
+        self.s.clamp()
+        self.s.save()
+        self.keys_label.setText(hotkey_help(self.s))
+        self.capture_started.emit()       # unregister...
+        self.capture_finished.emit()      # ...and register the new set
+
+    def _no_alt_preset(self):
+        self._apply_hotkeys({f: d.replace("Ctrl+Alt+", "Ctrl+Shift+") for f, d in hotkeys.DEFAULTS.items()})
+
+    def _default_hotkeys(self):
+        self._apply_hotkeys(dict(hotkeys.DEFAULTS))
+
+    def show_hotkey_problems(self, failed: list):
+        if failed:
+            self.hk_problem.setText("Already used by another program, so it won't work: " + ", ".join(failed)
+                                    + ". Pick a different combination.")
+        else:
+            self.hk_problem.setText("")
+
     def _update_provider_rows(self):
         deepl = self.s.translate_provider == "deepl"
         self._w["translate_email"].setVisible(not deepl)
@@ -394,6 +531,9 @@ class SettingsDialog(QDialog):
                         if i >= 0:
                             wdg.setCurrentIndex(i)
             self._update_provider_rows()
+            for field, b in getattr(self, "hk_buttons", {}).items():
+                b.set_value(getattr(s, field))
+            self.keys_label.setText(hotkey_help(s))
         finally:
             self._building = False
 
@@ -410,3 +550,5 @@ class SettingsDialog(QDialog):
         self.s.save()
         self.refresh()
         self.changed.emit()
+        self.capture_started.emit()       # re-register the default shortcuts
+        self.capture_finished.emit()

@@ -82,6 +82,13 @@ class Settings:
     deepl_key: str = ""                  # your own DeepL API key (stored only on this PC)
     show_romaji: bool = False            # Japanese pronunciation in English letters
     first_run: bool = True
+    # Keyboard shortcuts (empty = off). Change them in Settings → Shortcuts.
+    hk_toggle: str = "Ctrl+Alt+L"
+    hk_click: str = "Ctrl+Alt+K"
+    hk_settings: str = "Ctrl+Alt+O"
+    hk_earlier: str = "Ctrl+Alt+Left"
+    hk_later: str = "Ctrl+Alt+Right"
+    hk_version: str = "Ctrl+Alt+V"
 
     # ------------------------------------------------------------------
     @classmethod
@@ -127,6 +134,10 @@ class Settings:
             self.position = "bottom-center"
         if self.long_lines not in ("widen", "shrink", "wrap"):
             self.long_lines = "widen"
+        from .hotkeys import ACTIONS, is_valid, normalise
+        for field, _, default in ACTIONS:
+            val = getattr(self, field)
+            setattr(self, field, normalise(val) if val and is_valid(val) else ("" if not val else default))
         if self.album_art_position not in ("auto", "left", "header"):
             self.album_art_position = "auto"
         if self.time_display not in ("off", "left", "elapsed"):

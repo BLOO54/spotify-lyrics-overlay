@@ -24,6 +24,7 @@ from .lrc import build_lyrics
 from .lyrics_provider import LrclibClient, LyricsNetworkError
 from .media_session import MediaState, MediaWatcher
 from .song_sync import SongSync
+from . import hotkeys
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
 from .translate import (TranslationKeyError, TranslationQuotaError,
@@ -36,14 +37,9 @@ FRAME_MS = 16          # ~60 fps
 TOPMOST_MS = 2000
 
 HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER, HK_VERSION = range(1, 7)
-HOTKEYS = {
-    HK_TOGGLE: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["L"]),
-    HK_CLICK: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["K"]),
-    HK_SETTINGS: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["O"]),
-    HK_EARLIER: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["LEFT"]),
-    HK_LATER: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["RIGHT"]),
-    HK_VERSION: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["V"]),
-}
+# hotkey id -> settings field holding its key combination
+HOTKEY_FIELDS = {HK_TOGGLE: "hk_toggle", HK_CLICK: "hk_click", HK_SETTINGS: "hk_settings",
+                 HK_EARLIER: "hk_earlier", HK_LATER: "hk_later", HK_VERSION: "hk_version"}
 
 
 def resource_path(rel: str) -> Path:
@@ -125,6 +121,7 @@ class Controller(QObject):
         self.top_timer.start(TOPMOST_MS)
 
         self.hotkey_filter = None
+        self._registered = set()
         self._register_hotkeys()
 
         self._apply_visibility()
@@ -154,18 +151,25 @@ class Controller(QObject):
         self.act_click.toggled.connect(self.set_click_through)
         act_settings = QAction("Settings…", self.menu)
         act_settings.triggered.connect(self.open_settings)
-        act_earlier = QAction("This song: lyrics earlier (−250 ms)\tCtrl+Alt+←", self.menu)
+        act_earlier = QAction("This song: lyrics earlier (−250 ms)", self.menu)
         act_earlier.triggered.connect(lambda: self.nudge_offset(+250))
-        act_later = QAction("This song: lyrics later (+250 ms)\tCtrl+Alt+→", self.menu)
+        act_later = QAction("This song: lyrics later (+250 ms)", self.menu)
         act_later.triggered.connect(lambda: self.nudge_offset(-250))
         act_reset = QAction("This song: reset sync", self.menu)
         act_reset.triggered.connect(lambda: self.nudge_offset(None))
-        act_version = QAction("Try another lyrics version\tCtrl+Alt+V", self.menu)
+        act_version = QAction("Try another lyrics version", self.menu)
         act_version.triggered.connect(self.try_other_version)
         act_refetch = QAction("Reload lyrics", self.menu)
         act_refetch.triggered.connect(self.refetch)
         act_quit = QAction("Quit", self.menu)
         act_quit.triggered.connect(self.quit)
+        self._hk_actions = {"hk_toggle": (self.act_show, "Show overlay"),
+                            "hk_click": (self.act_click, "Click-through"),
+                            "hk_settings": (act_settings, "Settings…"),
+                            "hk_earlier": (act_earlier, "This song: lyrics earlier (−250 ms)"),
+                            "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
+                            "hk_version": (act_version, "Try another lyrics version")}
+        self._label_menu()
         for a in (self.act_show, self.act_click, act_settings):
             self.menu.addAction(a)
         self.menu.addSeparator()
@@ -186,24 +190,50 @@ class Controller(QObject):
         elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.open_settings()
 
+    def _label_menu(self):
+        """Show each action's current shortcut next to it in the tray menu."""
+        for field, (action, text) in self._hk_actions.items():
+            keys = getattr(self.s, field)
+            action.setText(f"{text}\t{keys}" if keys else text)
+
     def _welcome(self):
+        parts = [f"{getattr(self.s, f)} {what}" for f, what in
+                 (("hk_toggle", "hide/show"), ("hk_click", "click-through"), ("hk_settings", "settings"))
+                 if getattr(self.s, f)]
         self.tray.showMessage(
             APP_NAME,
-            "Running in the system tray (bottom-right).\n"
-            "Ctrl+Alt+L hide/show · Ctrl+Alt+K click-through · Ctrl+Alt+O settings",
+            "Running in the system tray (bottom-right).\n" + " · ".join(parts),
             QSystemTrayIcon.MessageIcon.Information, 8000)
 
     # ------------------------------------------------------------ hotkeys
-    def _register_hotkeys(self):
+    def _register_hotkeys(self, announce_failures: bool = True):
+        """(Re)register every shortcut from the settings with Windows."""
         if not win32.IS_WINDOWS:
-            return
-        self.hotkey_filter = HotkeyFilter(self._on_hotkey)
-        self.app.installNativeEventFilter(self.hotkey_filter)
-        failed = [hid for hid, (m, vk) in HOTKEYS.items() if not win32.register_hotkey(hid, m, vk)]
-        if failed:
+            return []
+        if self.hotkey_filter is None:
+            self.hotkey_filter = HotkeyFilter(self._on_hotkey)
+            self.app.installNativeEventFilter(self.hotkey_filter)
+        self.unregister_hotkeys()
+        failed = []
+        for hid, field in HOTKEY_FIELDS.items():
+            keys = getattr(self.s, field)
+            parsed = hotkeys.parse(keys)
+            if parsed is None:
+                continue
+            if win32.register_hotkey(hid, *parsed):
+                self._registered.add(hid)
+            else:
+                failed.append(keys)
+        if failed and announce_failures:
             QTimer.singleShot(1500, lambda: self.tray.showMessage(
-                APP_NAME, "Some keyboard shortcuts are already used by another program. "
-                "You can still use the tray icon menu.", QSystemTrayIcon.MessageIcon.Warning, 6000))
+                APP_NAME, "These shortcuts are already used by another program: " + ", ".join(failed)
+                + ". Pick different ones in Settings → Shortcuts.", QSystemTrayIcon.MessageIcon.Warning, 7000))
+        return failed
+
+    def unregister_hotkeys(self):
+        for hid in list(getattr(self, "_registered", set())):
+            win32.unregister_hotkey(hid)
+        self._registered = set()
 
     def _on_hotkey(self, hid: int):
         if hid == HK_TOGGLE:
@@ -313,9 +343,18 @@ class Controller(QObject):
         if self.settings_dlg is None:
             self.settings_dlg = SettingsDialog(self.s)
             self.settings_dlg.changed.connect(self._settings_changed)
+            # while you press a new shortcut, our own shortcuts must not swallow the keys
+            self.settings_dlg.capture_started.connect(self.unregister_hotkeys)
+            self.settings_dlg.capture_finished.connect(self._hotkeys_changed)
         self.settings_dlg.show()
         self.settings_dlg.raise_()
         self.settings_dlg.activateWindow()
+
+    def _hotkeys_changed(self):
+        failed = self._register_hotkeys(announce_failures=False)
+        self._label_menu()
+        if self.settings_dlg:
+            self.settings_dlg.show_hotkey_problems(failed)
 
     def _settings_changed(self):
         self.act_click.setChecked(self.s.click_through)
@@ -345,8 +384,7 @@ class Controller(QObject):
 
     def quit(self):
         try:
-            for hid in HOTKEYS:
-                win32.unregister_hotkey(hid)
+            self.unregister_hotkeys()
             if self.demo:
                 self.demo_player.stop()
             else:
