@@ -45,7 +45,9 @@ jobs:
           Write-Host "Version $v"
 
       - name: Unit tests
-        run: python -m pytest -q
+        run: |
+          python -m pytest -q -rA 2>&1 | Tee-Object -FilePath pytest-output.txt
+          if ($LASTEXITCODE -ne 0) { throw "Unit tests failed" }
 
       - name: Self-test from source (on Windows)
         run: |
@@ -129,6 +131,22 @@ jobs:
           path: |
             selftest-*.txt
             demo-overlay*.png
+
+      - name: Publish build diagnostics (readable without logging in)
+        if: always() && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ci-diagnostics
+          name: CI diagnostics (latest build - not a download)
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          body: Test output from the most recent build. For troubleshooting only - get the app from the latest normal release.
+          files: |
+            pytest-output.txt
+            selftest-*.txt
+          fail_on_unmatched_files: false
+          overwrite_files: true
 
       - name: Publish GitHub Release
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
