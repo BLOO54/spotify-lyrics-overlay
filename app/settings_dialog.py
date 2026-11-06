@@ -27,6 +27,12 @@ QSlider::handle:horizontal { background: #a855f7; width: 14px; margin: -6px 0; b
 QSlider::sub-page:horizontal { background: #7c3aed; border-radius: 2px; }
 """
 
+LINE_CHOICES = [
+    "1 line – current line only",
+    "2 lines – current + next",
+    "3 lines – previous, current, next",
+]
+
 HOTKEY_HELP = (
     "<b>Ctrl+Alt+L</b> show / hide overlay &nbsp;·&nbsp; <b>Ctrl+Alt+K</b> click-through on/off<br>"
     "<b>Ctrl+Alt+O</b> open settings &nbsp;·&nbsp; <b>Ctrl+Alt+← / →</b> lyrics earlier / later"
@@ -133,12 +139,16 @@ class SettingsDialog(QDialog):
         f = QFormLayout(g)
         self.ct_box = self._check("Click-through (mouse passes through to the game)", "click_through")
         self.title_box = self._check("Show song title and artist", "show_title")
-        self.ctx_box = self._check("Show previous / next line", "show_context_lines")
+        self.lines_box = QComboBox()
+        self.lines_box.addItems(LINE_CHOICES)
+        self.lines_box.setCurrentIndex(settings.lines_shown - 1)
+        self.lines_box.currentIndexChanged.connect(lambda i: self._set("lines_shown", i + 1))
         self.est_box = self._check("Estimate word timing when only line timing exists", "estimate_word_timing")
         self.pause_box = self._check("Hide overlay while music is paused", "hide_when_paused")
         self.spot_box = self._check("Only follow Spotify (ignore other media players)", "spotify_only")
-        for w in (self.ct_box, self.title_box, self.ctx_box, self.est_box, self.pause_box, self.spot_box):
+        for w in (self.ct_box, self.title_box, self.est_box, self.pause_box, self.spot_box):
             f.addRow(w)
+        f.addRow("Lines shown", self.lines_box)
         self.offset_box = self._spin(-10000, 10000, settings.sync_offset_ms, "sync_offset_ms", " ms", step=50)
         self.offset_box.setToolTip("Positive = lyrics appear earlier. Use if lyrics feel late.")
         f.addRow("Sync adjustment", self.offset_box)
@@ -233,10 +243,11 @@ class SettingsDialog(QDialog):
             self.width_box.setValue(self.s.width)
             self.margin_box.setValue(self.s.margin)
             for b, k in ((self.ct_box, "click_through"), (self.title_box, "show_title"),
-                         (self.ctx_box, "show_context_lines"), (self.est_box, "estimate_word_timing"),
+                         (self.est_box, "estimate_word_timing"),
                          (self.pause_box, "hide_when_paused"), (self.spot_box, "spotify_only")):
                 b.setChecked(getattr(self.s, k))
             self.offset_box.setValue(self.s.sync_offset_ms)
+            self.lines_box.setCurrentIndex(self.s.lines_shown - 1)
         finally:
             self._building = False
         self.changed.emit()

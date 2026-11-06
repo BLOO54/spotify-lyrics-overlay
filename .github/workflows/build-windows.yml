@@ -80,6 +80,16 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "App exited with code $($p.ExitCode)" }
           Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -ErrorAction SilentlyContinue
 
+      - name: Screenshots of each "Lines shown" mode
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $cfg = "$env:APPDATA\SpotifyLyricsOverlay\settings.json"
+          foreach ($n in 1, 2, 3) {
+            "{""lines_shown"": $n, ""first_run"": false}" | Set-Content -Encoding utf8 $cfg
+            Start-Process $exe -ArgumentList "--demo","--screenshot","$PWD\demo-overlay-$($n)lines.png","--quit-after","7" -Wait
+            if (-not (Test-Path "demo-overlay-$($n)lines.png")) { throw "No screenshot for $n lines" }
+          }
+
       - name: Build installer (Inno Setup)
         run: |
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
@@ -105,7 +115,7 @@ jobs:
           name: test-results
           path: |
             selftest-*.txt
-            demo-overlay.png
+            demo-overlay*.png
 
       - name: Publish GitHub Release
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -118,7 +128,7 @@ jobs:
           files: |
             Output/*
             selftest-exe.txt
-            demo-overlay.png
+            demo-overlay*.png
           body: |
             **Download `SpotifyLyricsOverlay-Setup-${{ steps.ver.outputs.version }}.exe`** and double-click it.
             If Windows says "Windows protected your PC", click **More info → Run anyway** (the app isn't paid-signed).

@@ -304,3 +304,16 @@ def test_settings_bad_values_clamped(tmp_path, monkeypatch):
     Settings.path().write_text(json.dumps({"font_size": 9999, "position": "moon", "bold": "yes"}), encoding="utf-8")
     s = Settings.load()
     assert s.font_size == 120 and s.position == "bottom-center" and s.bold is True
+
+
+def test_lines_shown_setting_and_migration(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert Settings().lines_shown == 3
+    # someone upgrading from 1.0.0 who had turned the extra lines off
+    Settings.path().write_text(json.dumps({"show_context_lines": False}), encoding="utf-8")
+    assert Settings.load().lines_shown == 1
+    Settings.path().write_text(json.dumps({"lines_shown": 2}), encoding="utf-8")
+    assert Settings.load().lines_shown == 2
+    Settings.path().write_text(json.dumps({"lines_shown": 9}), encoding="utf-8")
+    assert Settings.load().lines_shown == 3

@@ -90,9 +90,12 @@ class OverlayWindow(QWidget):
         main, ctx, head = self.fonts()
         self._pad = max(10, int(self.s.font_size * 0.45))
         self._main_h = QFontMetricsF(main).height() * 1.25
-        self._ctx_h = QFontMetricsF(ctx).height() * 1.25 if self.s.show_context_lines else 0
+        self._ctx_h = QFontMetricsF(ctx).height() * 1.25
+        # rows above / below the big current line
+        self._top_h = self._ctx_h if self.s.lines_shown >= 3 else 0
+        self._bot_h = self._ctx_h if self.s.lines_shown >= 2 else 0
         self._head_h = QFontMetricsF(head).height() * 1.6 if self.s.show_title else 0
-        h = int(self._pad * 2 + self._head_h + self._main_h + self._ctx_h * 2)
+        h = int(self._pad * 2 + self._head_h + self._main_h + self._top_h + self._bot_h)
         self.setFixedSize(self.s.width, h)
         self.setWindowOpacity(self.s.window_opacity)
         self.reposition()
@@ -293,9 +296,9 @@ class OverlayWindow(QWidget):
 
     def _paint_lyrics(self, p: QPainter, main_f: QFont, ctx_f: QFont, top: float):
         ly = self.lyrics
-        prev_cy = top + self._ctx_h / 2
-        main_cy = top + self._ctx_h + self._main_h / 2
-        next_cy = top + self._ctx_h + self._main_h + self._ctx_h / 2
+        prev_cy = top + self._top_h / 2
+        main_cy = top + self._top_h + self._main_h / 2
+        next_cy = top + self._top_h + self._main_h + self._bot_h / 2
 
         if not ly or not ly.synced:
             msg = self.status or ("Instrumental ♪" if ly and ly.instrumental else "")
@@ -310,12 +313,13 @@ class OverlayWindow(QWidget):
         a = _ease((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
 
         lines = ly.lines
-        ctx = self.s.show_context_lines
-        slide = (1 - a) * (self._ctx_h or self._main_h * 0.4)
+        show_prev = self.s.lines_shown >= 3
+        show_next = self.s.lines_shown >= 2
+        slide = (1 - a) * (self._ctx_h if show_next else self._main_h * 0.4)
 
-        if ctx and idx - 1 >= 0:
+        if show_prev and idx - 1 >= 0:
             self._paint_simple_line(p, ctx_f, lines[idx - 1].text, prev_cy + slide, 0.38 * a)
-        if ctx:
+        if show_next:
             nxt = lines[idx + 1] if idx + 1 < len(lines) else None
             if nxt is not None:
                 self._paint_simple_line(p, ctx_f, nxt.text or "♪", next_cy + slide * 0.5, 0.5)

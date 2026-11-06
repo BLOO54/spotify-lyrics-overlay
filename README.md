@@ -18,7 +18,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.0.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.0.1.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -27,7 +27,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.0.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.0.1.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -73,6 +73,9 @@ The app runs in the **system tray** (the small icons at the bottom-right of the 
 1. Turn **click-through OFF** (Ctrl+Alt+K).
 2. Drag the overlay with the left mouse button and drop it where you want it.
 3. Turn click-through back **ON** before gaming.
+
+**How many lines?** Settings → Behaviour → **Lines shown**: 1 (current line only), 2 (current + next)
+or 3 (previous, current and next, the default).
 
 Or pick a preset position in **Settings → Position & size** (top, bottom, corners, centre, and which monitor).
 Right-click the overlay or double-click it to open the menu or settings.

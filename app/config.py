@@ -56,7 +56,7 @@ class Settings:
     custom_y: int = 100
     # Behaviour
     show_title: bool = True
-    show_context_lines: bool = True      # previous / next lines, dimmed
+    lines_shown: int = 3                 # 1 = current only, 2 = current + next, 3 = previous + current + next
     click_through: bool = False
     visible: bool = True
     hide_when_paused: bool = False
@@ -78,6 +78,9 @@ class Settings:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 known = {f.name: f for f in fields(cls)}
+                # older versions had an on/off 'show_context_lines' option
+                if "lines_shown" not in data and data.get("show_context_lines") is False:
+                    data["lines_shown"] = 1
                 for k, v in data.items():
                     if k in known:
                         default = getattr(s, k)
@@ -100,6 +103,7 @@ class Settings:
         self.window_opacity = max(0.1, min(1.0, float(self.window_opacity)))
         self.width = max(300, min(4000, int(self.width)))
         self.margin = max(0, min(1000, int(self.margin)))
+        self.lines_shown = max(1, min(3, int(self.lines_shown)))
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
