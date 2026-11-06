@@ -399,7 +399,16 @@ class Controller(QObject):
                                   QSystemTrayIcon.MessageIcon.Information, 3000)
             return
         res = self._last_result
-        lines = lines_for_tapping(res.synced if res else None, res.plain if res else None)
+        ly = self.overlay.lyrics
+        offset_s = (self.s.sync_offset_ms + self._song_offset_ms) / 1000.0
+        if ly and ly.synced:
+            # start from the timing you see now (including any earlier/later fix), in song time
+            sung = [ln for ln in ly.lines if not ln.is_break]
+            lines = [ln.text for ln in sung]
+            times = [max(0.0, ln.start - offset_s) for ln in sung]
+        else:
+            lines = lines_for_tapping(res.synced if res else None, res.plain if res else None)
+            times = []
         if not lines:
             self.tray.showMessage(APP_NAME, "There are no lyrics to sync for this song. You can put your own "
                                   "file in the lyrics folder (tray → Open my lyrics folder).",
@@ -407,12 +416,40 @@ class Controller(QObject):
             return
         from .tap_sync import TapSyncDialog
         restart = (lambda: self.watcher.request("restart")) if not self.demo else None
-        self.tap_dlg = TapSyncDialog(st.title, st.artist, lines, self.clock.position, restart, st.duration)
         title, artist = st.title, st.artist
+        # while editing, the overlay previews your timing directly (no per-song adjustment on top)
+        self._offset_before_edit = self._song_offset_ms
+        self._song_offset_ms = 0
+        self.tap_dlg = TapSyncDialog(st.title, st.artist, lines, self.clock.position, restart, st.duration,
+                                     initial_times=times, seek_fn=self.seek_to,
+                                     can_seek_fn=lambda: bool(self.track and self.track.can_seek),
+                                     shift=self.s.sync_offset_ms / 1000.0)
         self.tap_dlg.saved.connect(lambda text: self._tap_saved(title, artist, text))
+        self.tap_dlg.preview.connect(self._tap_preview)
+        log.info("Sync window opened: %d lines, %d already timed, player allows jumping: %s",
+                 len(lines), sum(t is not None for t in times), bool(st.can_seek))
+        self.tap_dlg.rejected.connect(self._tap_cancelled)
         self.tap_dlg.show()
         self.tap_dlg.raise_()
         self.tap_dlg.activateWindow()
+
+    def seek_to(self, seconds: float):
+        """Jump the song to this position (only if the player allows it)."""
+        if self.demo or not (self.track and self.track.can_seek):
+            return
+        self.watcher.request(f"seek:{seconds:.3f}")
+        self.clock.reset(seconds, self.clock.playing)      # move our stopwatch straight away
+
+    def _tap_preview(self, text: str):
+        ly = build_lyrics(text, None, False, self.s.estimate_word_timing, "my file",
+                          estimate_mode=self.s.word_timing_mode)
+        if ly.synced:
+            self.overlay.set_lyrics(ly)
+
+    def _tap_cancelled(self):
+        self._song_offset_ms = getattr(self, "_offset_before_edit", self._song_offset_ms)
+        if self._last_result is not None:
+            self._show_result(self._last_result)
 
     def _tap_saved(self, title: str, artist: str, text: str):
         path = self.my_lyrics.save(title, artist, text)

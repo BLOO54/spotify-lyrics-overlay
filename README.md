@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.11.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.12.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.11.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.12.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -156,8 +156,11 @@ the cover sits next to the song title when the overlay is narrow (choose Small /
 ### 🎯 Your own timing for a song
 If a song's lyrics are out of time and no other version fits:
 1. Play the song, then right-click the tray icon → **Sync this song myself…**
-2. Click **Restart song**, then press **Space** the moment each line starts (Backspace = undo).
-3. Press **Save**. Your timing is saved as a file and used for that song from now on.
+   Every line is listed with its current time - you only need to fix the wrong ones.
+2. **Click a wrong line**, then press **Space** the moment it starts (the song jumps back to just before it,
+   if Spotify allows that). Or select a line and press **← / →** to move it 0.1 s (Shift = 0.5 s).
+   To time everything from scratch: **Restart song** and tap Space on every line.
+3. Your changes show live in the overlay. Press **Save** to keep them (Cancel = no change).
 
 You can also put your own `.lrc` files in the lyrics folder (tray → **Open my lyrics folder**), named
 `Artist - Title.lrc`, e.g. `Jamie Paige - birdbrain.lrc`. Your files always win over the lyrics website.

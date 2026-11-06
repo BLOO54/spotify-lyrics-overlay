@@ -38,6 +38,7 @@ class MediaState:
     source_app: str = ""
     error: str = ""
     thumbnail: bytes | None = None      # album art image (JPEG/PNG bytes)
+    can_seek: bool = False              # does the player let other apps jump to a position?
 
     @property
     def track_key(self) -> tuple:
@@ -133,7 +134,11 @@ class MediaWatcher:
             if s is None:
                 continue
             try:
-                if cmd == "restart":
+                if cmd.startswith("seek:"):
+                    secs = max(0.0, float(cmd.split(":", 1)[1]))
+                    start = _seconds(s.get_timeline_properties().start_time)
+                    await s.try_change_playback_position_async(int((start + secs) * 10_000_000))
+                elif cmd == "restart":
                     info = s.get_playback_info()
                     can_seek = bool(info and info.controls and info.controls.is_playback_position_enabled)
                     if can_seek:
@@ -232,4 +237,6 @@ class MediaWatcher:
             playing=playing,
             source_app=session.source_app_user_model_id or "",
             thumbnail=self._thumb,
+            can_seek=bool(info is not None and info.controls is not None
+                          and info.controls.is_playback_position_enabled),
         )

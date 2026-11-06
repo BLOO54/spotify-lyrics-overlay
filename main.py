@@ -134,8 +134,10 @@ def _schedule_tap_test(app, ctl, picture):
             app.sendEvent(d, QKeyEvent(QEvent.Type.KeyPress, k, Qt.KeyboardModifier.NoModifier))
 
     QTimer.singleShot(1500, ctl.open_tap_sync)
-    for i, ms in enumerate((2200, 2900, 3600)):
-        QTimer.singleShot(ms, lambda: key(Qt.Key.Key_Space))
+    steps = [(2200, Qt.Key.Key_Space), (2900, Qt.Key.Key_Space), (3200, Qt.Key.Key_Down),
+             (3400, Qt.Key.Key_Right), (3600, Qt.Key.Key_Right)]
+    for ms, k in steps:
+        QTimer.singleShot(ms, lambda k=k: key(k))
     QTimer.singleShot(4000, lambda: ctl.tap_dlg and ctl.tap_dlg.grab().save(picture))
     QTimer.singleShot(4300, lambda: key(Qt.Key.Key_Return))
 

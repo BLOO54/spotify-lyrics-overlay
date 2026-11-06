@@ -91,39 +91,76 @@ def fmt_ts(t: float) -> str:
 
 @dataclass
 class TapSession:
-    """Records one timestamp per lyric line as you tap."""
+    """Timing for every line of a song, edited by tapping, clicking and nudging.
+
+    times[i] is when line i starts, in song time (None = not timed yet).
+    `cursor` is the line the next Space tap will time.
+    """
     lines: list[str]
-    taps: list[float] = field(default_factory=list)
+    times: list = field(default_factory=list)
+    cursor: int = 0
+
+    def __post_init__(self):
+        if len(self.times) != len(self.lines):
+            self.times = (list(self.times) + [None] * len(self.lines))[:len(self.lines)]
+
+    # kept for older callers / tests
+    @property
+    def taps(self) -> list[float]:
+        return [t for t in self.times if t is not None]
 
     @property
     def next_index(self) -> int:
-        return len(self.taps)
+        return self.cursor
 
     @property
     def done(self) -> bool:
-        return len(self.taps) >= len(self.lines)
+        return self.cursor >= len(self.lines)
+
+    @property
+    def timed_count(self) -> int:
+        return sum(t is not None for t in self.times)
 
     def tap(self, position: float) -> bool:
-        """Mark that the next line starts now. Returns False if all lines are already timed."""
+        """The line at the cursor starts now. Returns False if past the last line."""
         if self.done:
             return False
         t = max(0.0, position - TAP_REACTION)
-        if self.taps and t <= self.taps[-1]:
-            t = self.taps[-1] + 0.05            # keep lines in order even after a double-tap
-        self.taps.append(t)
+        prev = next((self.times[j] for j in range(self.cursor - 1, -1, -1) if self.times[j] is not None), None)
+        if prev is not None and t <= prev:
+            t = prev + 0.05                     # keep lines in order even after a double-tap
+        self.times[self.cursor] = t
+        self.cursor += 1
         return True
 
     def undo(self) -> None:
-        if self.taps:
-            self.taps.pop()
+        """Step back to the previous line so it can be tapped again."""
+        if self.cursor > 0:
+            self.cursor -= 1
 
-    def to_lrc(self, title: str, artist: str, song_end: float = 0.0) -> str:
+    def go_to(self, index: int) -> None:
+        self.cursor = max(0, min(index, len(self.lines)))
+
+    def nudge(self, index: int, delta: float) -> None:
+        if 0 <= index < len(self.times) and self.times[index] is not None:
+            self.times[index] = max(0.0, self.times[index] + delta)
+
+    def rewind_target(self, index: int, lead: float = 1.5) -> float:
+        """Where to jump the song so you can hear line `index` coming: just before the line above it."""
+        before = next((self.times[j] for j in range(index - 1, -1, -1) if self.times[j] is not None), None)
+        if before is None:
+            return 0.0
+        return max(0.0, before - lead)
+
+    def to_lrc(self, title: str, artist: str, song_end: float = 0.0, shift: float = 0.0) -> str:
+        """Write the timed lines as LRC text (shift = seconds added to every time)."""
         out = [f"[ti:{title}]", f"[ar:{artist}]", "[by:Spotify Lyrics Overlay tap-along]"]
-        for line, t in zip(self.lines, self.taps):
+        timed = sorted(((t + shift, line) for line, t in zip(self.lines, self.times) if t is not None),
+                       key=lambda x: x[0])
+        for t, line in timed:
             out.append(f"{fmt_ts(t)}{line}")
-        # an empty line after the last one, so the last lyric doesn't stay up forever
-        if self.taps:
-            last = self.taps[-1]
+        if timed:                              # an empty line so the last lyric clears
+            last = timed[-1][0]
             end = song_end if song_end > last + 1 else last + 6
             out.append(fmt_ts(min(end, last + 8)))
         return "\n".join(out) + "\n"

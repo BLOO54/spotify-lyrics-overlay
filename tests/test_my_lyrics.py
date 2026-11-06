@@ -42,7 +42,8 @@ def test_fmt_ts():
 def test_tap_session_makes_valid_lrc():
     s = TapSession(["first line", "second line", "third line"])
     assert s.tap(10.15) and s.tap(14.0)
-    s.undo()                                     # oops
+    s.undo()                                     # oops - back to line 2
+    assert s.cursor == 1
     assert s.tap(14.65) and s.tap(14.60)         # accidental double tap still stays in order
     assert s.done and not s.tap(30)
     text = s.to_lrc("Song", "Artist", song_end=200)
@@ -58,3 +59,26 @@ def test_lines_for_tapping():
     assert lines_for_tapping(synced, None) == ["hello there", "second line"]
     assert lines_for_tapping(None, "one\n\n two \n") == ["one", "two"]
     assert lines_for_tapping(None, None) == []
+
+
+def test_fix_only_the_wrong_lines():
+    # start from existing timing, then fix line 2 and nudge line 3
+    s = TapSession(["a", "b", "c", "d"], times=[1.0, 5.0, 9.0, 13.0])
+    assert s.timed_count == 4 and s.cursor == 0
+    s.go_to(1)
+    assert s.rewind_target(1) == 0.0             # 1.5 s before line "a" -> clamps at 0
+    assert abs(s.rewind_target(2) - 3.5) < 1e-9  # before line "b"
+    s.tap(6.15)                                  # re-tap line b at the right moment
+    assert s.times == [1.0, 6.0, 9.0, 13.0] and s.cursor == 2
+    s.nudge(2, +0.1); s.nudge(2, -0.5)
+    assert abs(s.times[2] - 8.6) < 1e-9
+    s.nudge(9, 1.0)                              # out of range: ignored
+    text = s.to_lrc("T", "A", song_end=60, shift=0.25)
+    starts = [round(l.start, 2) for l in lrc.parse_lrc(text)]
+    assert starts[:4] == [1.25, 6.25, 8.85, 13.25]
+
+
+def test_untimed_lines_are_left_out_and_order_kept():
+    s = TapSession(["a", "b", "c"], times=[None, 7.0, 2.0])
+    starts = [(round(l.start, 1), l.text) for l in lrc.parse_lrc(s.to_lrc("T", "A"))]
+    assert starts[:2] == [(2.0, "c"), (7.0, "b")]

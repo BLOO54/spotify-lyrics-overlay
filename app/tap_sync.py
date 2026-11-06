@@ -1,67 +1,89 @@
 """The "Sync this song myself" window.
 
-Plain English: play the song and tap SPACE each time a new line starts. The
-window shows which line is next. Backspace undoes the last tap. When you press
-Save, a lyrics file with your timing is written to your "my lyrics" folder and
-used for this song from then on.
+Plain English:
+* Every lyric line is listed with the time it starts. If the song already had
+  timing, it's filled in - you only fix the lines that are wrong.
+* Press SPACE when the highlighted line starts; the cursor moves to the next line.
+* Click any line to re-time it (if Spotify allows it, the song jumps back to just
+  before that line so you can tap it right away).
+* Select a line and press ← / → to move it 0.1 s (hold Shift for 0.5 s).
+* Your changes show live in the overlay. Save writes them to your lyrics folder.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
+                               QVBoxLayout)
 
 from .my_lyrics import TapSession
 from .overlay import format_time
 from .settings_dialog import STYLE
 
 
+def _t(t) -> str:
+    if t is None:
+        return "  –:––.–"
+    m = int(t // 60)
+    return f"{m:3d}:{t - m * 60:04.1f}"
+
+
 class TapSyncDialog(QDialog):
     saved = Signal(str)          # the finished .lrc text
+    preview = Signal(str)        # the timing so far, for the live overlay preview
 
     def __init__(self, title: str, artist: str, lines: list[str], position_fn, restart_fn=None,
-                 duration: float = 0.0, parent=None):
+                 duration: float = 0.0, parent=None, initial_times=None, seek_fn=None, can_seek_fn=None,
+                 shift: float = 0.0):
         super().__init__(parent)
         self.title_, self.artist_ = title, artist
-        self.session = TapSession(list(lines))
+        self.session = TapSession(list(lines), list(initial_times or []))
         self.position_fn = position_fn
         self.restart_fn = restart_fn
+        self.seek_fn = seek_fn
+        self.can_seek_fn = can_seek_fn or (lambda: False)
         self.duration = duration
+        self.shift = shift
         self.setWindowTitle(f"Sync this song – {title}")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setStyleSheet(STYLE)
-        self.setMinimumWidth(560)
+        self.setStyleSheet(STYLE + "QListWidget{background:#16161f;color:#ddd;border:1px solid #2c2c40;"
+                                   "font-family:Consolas,monospace;font-size:13px;}"
+                                   "QListWidget::item:selected{background:#3b2a66;color:#fff;}")
+        self.setMinimumSize(620, 560)
 
         root = QVBoxLayout(self)
         head = QLabel(f"<b>{title}</b> — {artist}")
         head.setStyleSheet("font-size:14px;")
         root.addWidget(head)
-        how = QLabel("1. Click <b>Restart song</b> (or play it from the beginning).<br>"
-                     "2. Press <b>SPACE</b> the moment each line below starts being sung.<br>"
-                     "3. <b>Backspace</b> undoes a tap. Press <b>Save</b> when you're done.")
+        how = QLabel("Press <b>SPACE</b> when the line marked ▶ starts. "
+                     "<b>Click</b> a wrong line to re-time it from there. "
+                     "<b>← / →</b> moves the selected line 0.1 s (Shift = 0.5 s). "
+                     "<b>Backspace</b> = undo. Changes show live in the overlay.")
         how.setWordWrap(True)
         how.setStyleSheet("color:#b8b8cc; font-size:12px;")
         root.addWidget(how)
 
-        self.prev_lbl = QLabel()
         self.next_lbl = QLabel()
-        self.after_lbl = QLabel()
-        for lbl, css in ((self.prev_lbl, "color:#6c6c88; font-size:13px;"),
-                         (self.next_lbl, "color:#ffffff; font-size:22px; font-weight:bold; padding:8px;"
-                                         "border:1px solid #a855f7; border-radius:8px; background:#1c1530;"),
-                         (self.after_lbl, "color:#9a9ab0; font-size:14px;")):
-            lbl.setWordWrap(True)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(css)
-            root.addWidget(lbl)
+        self.next_lbl.setWordWrap(True)
+        self.next_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.next_lbl.setStyleSheet("color:#fff; font-size:20px; font-weight:bold; padding:8px;"
+                                    "border:1px solid #a855f7; border-radius:8px; background:#1c1530;")
+        root.addWidget(self.next_lbl)
+
+        self.list = QListWidget()
+        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)        # keys go to the window, not the list
+        self.list.itemClicked.connect(self._clicked)
+        root.addWidget(self.list, 1)
+
         self.status = QLabel()
+        self.status.setWordWrap(True)
         self.status.setStyleSheet("color:#c9b8ff; font-size:12px;")
         root.addWidget(self.status)
 
         row = QHBoxLayout()
         self.restart_btn = QPushButton("Restart song")
         self.tap_btn = QPushButton("TAP  (Space)")
-        self.undo_btn = QPushButton("Undo  (Backspace)")
+        self.undo_btn = QPushButton("Undo")
         self.save_btn = QPushButton("Save")
         cancel = QPushButton("Cancel")
         self.save_btn.setStyleSheet("background:#7c3aed; border-color:#a855f7;")
@@ -76,58 +98,101 @@ class TapSyncDialog(QDialog):
         cancel.clicked.connect(self.reject)
         self.restart_btn.setEnabled(restart_fn is not None)
 
+        self._build_list()
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._refresh)
+        self.timer.timeout.connect(self._refresh_status)
         self.timer.start(100)
         self._refresh()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ keys
     def keyPressEvent(self, e):
         key = e.key()
+        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         if key == Qt.Key.Key_Space:
             self.tap()
         elif key == Qt.Key.Key_Backspace:
             self.undo()
+        elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            self.nudge_selected((-1 if key == Qt.Key.Key_Left else 1) * (0.5 if shift else 0.1))
+        elif key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            r = max(0, min(self.list.count() - 1, self.list.currentRow() + (-1 if key == Qt.Key.Key_Up else 1)))
+            self.list.setCurrentRow(r)
         elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.save()
         else:
             super().keyPressEvent(e)
 
+    # ------------------------------------------------------------------ actions
     def tap(self):
-        self.session.tap(float(self.position_fn()))
-        self._refresh()
+        i = self.session.cursor
+        if self.session.tap(float(self.position_fn())):
+            self.list.setCurrentRow(i)
+            self._changed()
 
     def undo(self):
         self.session.undo()
+        self._jump_before(self.session.cursor)
+        self._changed()
+
+    def go_to(self, index: int):
+        """Re-time from this line: move the cursor there (and jump the song back if possible)."""
+        self.session.go_to(index)
+        self._jump_before(index)
         self._refresh()
+
+    def nudge_selected(self, delta: float):
+        r = self.list.currentRow()
+        if r >= 0:
+            self.session.nudge(r, delta)
+            self._changed()
+
+    def _clicked(self, item):
+        self.go_to(self.list.row(item))
+
+    def _jump_before(self, index: int):
+        if self.seek_fn is not None and self.can_seek_fn():
+            self.seek_fn(self.session.rewind_target(index))
 
     def _restart(self):
         if self.restart_fn:
-            self.session.taps.clear()
+            self.session.go_to(0)
             self.restart_fn()
         self._refresh()
 
     def save(self):
-        if not self.session.taps:
+        if not self.session.timed_count:
             return
-        self.saved.emit(self.session.to_lrc(self.title_, self.artist_, self.duration))
+        self.saved.emit(self.session.to_lrc(self.title_, self.artist_, self.duration, self.shift))
         self.accept()
+
+    # ------------------------------------------------------------------ display
+    def _changed(self):
+        self._refresh()
+        self.preview.emit(self.session.to_lrc(self.title_, self.artist_, self.duration, self.shift))
+
+    def _build_list(self):
+        self.list.clear()
+        for _ in self.session.lines:
+            self.list.addItem(QListWidgetItem(""))
 
     def _refresh(self):
         s = self.session
-        i = s.next_index
-        lines = s.lines
-        self.prev_lbl.setText(f"✓ {lines[i - 1]}" if i > 0 else "")
-        if s.done:
-            self.next_lbl.setText("All lines timed! Press Save.")
-            self.after_lbl.setText("")
-        else:
-            self.next_lbl.setText(lines[i])
-            self.after_lbl.setText(lines[i + 1] if i + 1 < len(lines) else "(last line)")
-        self.status.setText(f"Line {min(i + 1, len(lines))} of {len(lines)} · song at "
-                            f"{format_time(self.position_fn())}"
-                            + ("  ·  you can Save now – untimed lines are left out" if 0 < i < len(lines) else ""))
-        self.undo_btn.setEnabled(i > 0)
-        self.save_btn.setEnabled(i > 0)
+        for i, line in enumerate(s.lines):
+            mark = "▶" if i == s.cursor else " "
+            self.list.item(i).setText(f"{mark} {_t(s.times[i])}  {line}")
+        if 0 <= s.cursor < self.list.count():
+            self.list.scrollToItem(self.list.item(s.cursor))
+        self.next_lbl.setText("All lines timed – press Save (or click a line to fix it)." if s.done
+                              else s.lines[s.cursor])
+        self.undo_btn.setEnabled(s.cursor > 0)
+        self.save_btn.setEnabled(s.timed_count > 0)
         self.tap_btn.setEnabled(not s.done)
+        self._refresh_status()
+
+    def _refresh_status(self):
+        seek = ("Clicking a line jumps the song to just before it." if self.can_seek_fn()
+                else "Your player doesn't allow jumping, so after clicking a line wait for it to come "
+                     "round (or press Restart song).")
+        self.status.setText(f"Song at {format_time(self.position_fn())} · {self.session.timed_count} of "
+                            f"{len(self.session.lines)} lines timed · {seek}")
