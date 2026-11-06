@@ -111,4 +111,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: Output/*
+          files: |
+            Output/*
+            selftest-exe.txt
+            demo-overlay.png
+          body: |
+            **Download `SpotifyLyricsOverlay-Setup-${{ steps.ver.outputs.version }}.exe`** and double-click it.
+            If Windows says "Windows protected your PC", click **More info → Run anyway** (the app isn't paid-signed).
+            Prefer no installer? Download the Portable zip, extract it, and run `SpotifyLyricsOverlay.exe`.
+            See the README for usage and keyboard shortcuts.
