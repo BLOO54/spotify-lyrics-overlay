@@ -132,11 +132,14 @@ jobs:
           iscc /DMyAppVersion=${{ steps.ver.outputs.version }} installer\installer.iss
 
       - name: Test silent install and auto-restart (what the in-app updater does)
+        timeout-minutes: 6
         run: |
           $setup = Get-ChildItem Output\SpotifyLyricsOverlay-Setup-*.exe | Select-Object -First 1
           $dir = "$env:LOCALAPPDATA\Programs\Spotify Lyrics Overlay"
           Get-Process SpotifyLyricsOverlay -ErrorAction SilentlyContinue | Stop-Process -Force
-          $p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/FORCECLOSEAPPLICATIONS","/RESTARTAPP=1" -Wait -PassThru
+          # wait for the installer only - not for the overlay it restarts (that keeps running)
+          $p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/FORCECLOSEAPPLICATIONS","/RESTARTAPP=1" -PassThru
+          if (-not $p.WaitForExit(180000)) { throw "installer did not finish within 3 minutes" }
           "installer exit code: $($p.ExitCode)" | Tee-Object -FilePath ci-update-check.txt
           if (-not (Test-Path "$dir\SpotifyLyricsOverlay.exe")) { throw "silent install did not install the app" }
           if (-not (Test-Path "$dir\unins000.exe")) { throw "no uninstaller - in-app update would not be offered" }
@@ -146,7 +149,8 @@ jobs:
           if (-not $running) { throw "app was not restarted after the silent install" }
           $running | Stop-Process -Force
           Start-Sleep -Seconds 1
-          $r = Start-Process "$dir\SpotifyLyricsOverlay.exe" -ArgumentList "--self-test","--report","$PWD\selftest-installed.txt" -Wait -PassThru
+          $r = Start-Process "$dir\SpotifyLyricsOverlay.exe" -ArgumentList "--self-test","--report","$PWD\selftest-installed.txt" -PassThru
+          $null = $r.WaitForExit(120000)
           Get-Content selftest-installed.txt | Tee-Object -FilePath ci-update-check.txt -Append
 
       - name: Test the updater against the real GitHub releases page
