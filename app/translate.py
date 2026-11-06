@@ -131,7 +131,6 @@ def line_needs_translation(line: str, source_lang: str) -> bool:
 # --------------------------------------------------------------------------
 # Romaji (Japanese pronunciation)
 _kks = None
-_JP_GAP = re.compile(r"(?<=[\u3040-\u30ff\u4e00-\u9fff])\s+(?=[\u3040-\u30ff\u4e00-\u9fff])")
 
 
 def romaji_available() -> bool:
@@ -147,15 +146,15 @@ def to_romaji(line: str) -> str:
     global _kks
     if not line.strip():
         return ""
-    # Spaces between Japanese words hide context from the dictionary
-    # (e.g. "君の 名前を" reads worse than "君の名前を"), so join them first.
-    joined = _JP_GAP.sub("", line)
     try:
         if _kks is None:
             import pykakasi
             _kks = pykakasi.kakasi()
-        parts = [item.get("hepburn", "") for item in _kks.convert(joined)]
-        out = " ".join(p.strip() for p in parts if p.strip())
+        words = []
+        for chunk in line.split():          # keep the song's own word breaks
+            parts = [item.get("hepburn", "") for item in _kks.convert(chunk)]
+            words.append(" ".join(p.strip() for p in parts if p.strip()))
+        out = " ".join(w for w in words if w)
         return re.sub(r"\s+([,.!?、。！？])", r"\1", out)
     except Exception:
         log.exception("romaji conversion failed")

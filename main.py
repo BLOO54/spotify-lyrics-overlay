@@ -94,7 +94,7 @@ def self_test(report_path: str | None) -> int:
         from app.translate import mymemory_probe, romaji_available, to_romaji
         add(romaji_available() and to_romaji("ありがとう").lower().startswith("arigat"),
             "Japanese romaji available")
-        for sample in ("君の名前を呼んでいる", "君の 名前を 呼んでいる", "夜空に光る星を見て", "明日もきっと会えるから"):
+        for sample in ("君の名前を呼んでいる", "ありがとう また 会おうね", "夜空に光る星を見て"):
             lines.append(f"• Romaji sample: {sample} → {to_romaji(sample)}")
         ok_tr = mymemory_probe()
         lines.append(("✔ " if ok_tr else "• ") + ("Translation service (MyMemory) reachable" if ok_tr
