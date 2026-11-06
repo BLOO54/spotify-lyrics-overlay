@@ -1,0 +1,155 @@
+# 🎤 Spotify Lyrics Overlay
+
+A transparent, always-on-top lyrics window for **Windows 10 and 11**. It shows the lyrics
+of whatever you're playing in Spotify, karaoke-style, on top of your games.
+
+- Follows Spotify automatically (song, artist, play/pause, skipping, seeking)
+- Word-by-word highlighting with a smooth purple→blue wipe
+- Works over **borderless / windowed fullscreen** games
+- **Click-through** mode so it never gets in the way of your mouse
+- Custom font, size, colours, opacity and position
+- Lives in the system tray, with keyboard shortcuts that work in-game
+
+**No Spotify login, no password, no API keys.** The app only *reads* the "now playing" info that
+Spotify already shares with Windows (the same info shown in the Windows volume popup).
+It never touches Spotify or your games.
+
+---
+
+## 📥 Installing (no programming needed)
+
+1. Download **`SpotifyLyricsOverlay-Setup-1.0.0.exe`** (see "Where do I get the installer?" below).
+2. Double-click it.
+3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
+   that aren't paid-signed. Click **More info** → **Run anyway**.
+4. Click **Next** through the installer. You can tick "Create a desktop shortcut" and
+   "Start automatically when I sign in".
+   *It installs just for your user account, so it never asks for administrator permission.*
+5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
+
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.0.0.zip` instead, right-click → **Extract All**,
+open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
+
+### Where do I get the installer?
+The installer is built automatically by GitHub on a real Windows computer:
+* On the project's GitHub page, click **Releases** (right side) and download the `.exe`, **or**
+* Click the **Actions** tab → the newest run with a green ✔ → scroll to **Artifacts** →
+  download **SpotifyLyricsOverlay-Windows-…** (it's a zip that contains the installer).
+
+Don't have the project on GitHub yet? See **[BUILD_ON_GITHUB.md](BUILD_ON_GITHUB.md)**.
+It's about 5 minutes of clicking, with no coding.
+
+---
+
+## ▶️ Using it
+
+1. Open **Spotify** (the desktop app) and play a song.
+2. Start **Spotify Lyrics Overlay** (Start menu or desktop shortcut).
+3. Lyrics appear near the bottom of your screen. 🎶
+
+The app runs in the **system tray** (the small icons at the bottom-right of the taskbar; click the
+**^** arrow if you don't see it). **Right-click the tray icon** for the menu:
+
+| Menu item | What it does |
+|---|---|
+| Show overlay | Hide or show the lyrics |
+| Click-through | When ON, your mouse goes straight through the overlay to the game |
+| Settings… | Font, size, colours, opacity, position and more |
+| Lyrics earlier / later | Fix lyrics that feel out of sync |
+| Reload lyrics | Download the lyrics for the current song again |
+| Quit | Close the app |
+
+### ⌨️ Keyboard shortcuts (work while gaming)
+
+| Keys | Action |
+|---|---|
+| **Ctrl + Alt + L** | Show / hide the overlay |
+| **Ctrl + Alt + K** | Click-through on / off |
+| **Ctrl + Alt + O** | Open settings |
+| **Ctrl + Alt + ←** | Lyrics earlier (−250 ms) |
+| **Ctrl + Alt + →** | Lyrics later (+250 ms) |
+
+### 🖱️ Moving the overlay
+1. Turn **click-through OFF** (Ctrl+Alt+K).
+2. Drag the overlay with the left mouse button and drop it where you want it.
+3. Turn click-through back **ON** before gaming.
+
+Or pick a preset position in **Settings → Position & size** (top, bottom, corners, centre, and which monitor).
+Right-click the overlay or double-click it to open the menu or settings.
+
+### 🎮 Games
+- ✅ **Borderless windowed / "windowed fullscreen"**: works. Set this in your game's video settings.
+- ❌ **Exclusive fullscreen**: no overlay app can draw over this without injecting into the game,
+  which this app deliberately does **not** do (it could trigger anti-cheat). Switch the game to borderless.
+
+### Word-by-word vs line-by-line
+The header shows which sync mode is in use:
+- **word sync**: the lyrics come with real per-word timing, so the highlight is exact.
+- **line sync · word estimate**: only line timing exists. The app spreads the words across the line so you still
+  get a karaoke feel. Turn off *"Estimate word timing"* in Settings for plain line-by-line mode,
+  where the whole line lights up with a progress bar underneath.
+
+Lyrics come from **[LRCLIB](https://lrclib.net)**, a free, community-made lyrics database.
+Most songs only have line timing there. If a song isn't in LRCLIB, the overlay says "No lyrics found".
+
+### Try it without Spotify
+Start menu → **Spotify Lyrics Overlay (Demo mode)** plays a fake song so you can tweak the look.
+
+---
+
+## 🛠️ Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| "Waiting for Spotify…" | Use the Spotify **desktop app** (not the web player) and press play. In Windows Settings → System → Notifications, make sure Spotify isn't blocked. |
+| Lyrics are early or late | Use Ctrl+Alt+← / → or Settings → Sync adjustment. |
+| Overlay hidden behind the game | Set the game to **borderless windowed**. |
+| Can't click or move the overlay | Click-through is on. Press **Ctrl+Alt+K**. |
+| Can't find the app | Look in the system tray (^ arrow bottom-right). |
+| Shortcut keys don't work | Another program already uses them. Use the tray menu instead. |
+| "Can't reach the lyrics service" | Check your internet. The app retries automatically every 15 seconds. |
+| Anything else | Start menu → **Spotify Lyrics Overlay (Self test)** checks every part and tells you what's wrong. The log is at `%APPDATA%\SpotifyLyricsOverlay\app.log`. |
+
+**Uninstall:** Windows Settings → Apps → Spotify Lyrics Overlay → Uninstall.
+Your settings stay in `%APPDATA%\SpotifyLyricsOverlay`; delete that folder to remove them too.
+
+---
+
+## 🔒 Privacy and fair use
+- No account, login, password or token is used or stored.
+- The only internet requests go to `lrclib.net`, sending the song title, artist, album and length,
+  identified with an app User-Agent as LRCLIB asks.
+- Lyrics are cached on your PC so each song is only downloaded once.
+- Nothing is injected into games or Spotify; the overlay is a normal (transparent) window.
+
+---
+
+## 👩‍💻 For developers
+
+```
+app/
+  lrc.py              LRC + enhanced (word-level) LRC parsing, word-timing estimation
+  clock.py            playback position tracking between Windows updates
+  lyrics_provider.py  LRCLIB client (lookup → search fallback, disk cache, offline errors)
+  media_session.py    Windows GlobalSystemMediaTransportControls reader (winrt)
+  win32.py            click-through, topmost, global hotkeys (ctypes / user32)
+  overlay.py          the transparent window and karaoke rendering
+  settings_dialog.py  settings window
+  controller.py       wires it together, tray icon
+  demo.py             demo song for --demo
+main.py               entry point (--demo, --self-test)
+SpotifyLyricsOverlay.spec   PyInstaller recipe
+installer/installer.iss     Inno Setup installer (per-user, no admin)
+.github/workflows/build-windows.yml   Windows build + tests + installer
+```
+
+Run from source on Windows (Python 3.10–3.12):
+```
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt pytest
+.venv\Scripts\python -m pytest -q
+.venv\Scripts\python main.py --demo
+```
+
+Make a release: bump `APP_VERSION` in `app/__init__.py` and `version_info.txt`, then push a tag
+like `v1.0.1`. GitHub Actions builds and publishes the installer to Releases.

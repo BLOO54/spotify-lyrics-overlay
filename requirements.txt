@@ -1,0 +1,8 @@
+# User interface
+PySide6>=6.6,<7
+
+# Windows media session (reads "now playing" from Windows - official Microsoft API)
+winrt-runtime>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2.0; sys_platform == "win32"
+winrt-Windows.Media.Control>=2.0; sys_platform == "win32"

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+Output/
+*.png.tmp
+selftest-*.txt
+demo-overlay.png
+.pytest_cache/

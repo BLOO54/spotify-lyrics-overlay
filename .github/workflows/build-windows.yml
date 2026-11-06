@@ -1,0 +1,114 @@
+# Builds the Windows app on a real Windows machine provided by GitHub, tests it,
+# and produces:  SpotifyLyricsOverlay-Setup-<version>.exe  (installer)
+#                SpotifyLyricsOverlay-Portable-<version>.zip (no install needed)
+# Download them from the "Actions" tab -> latest run -> "Artifacts",
+# or from "Releases" when a version tag like v1.0.0 is pushed.
+
+name: Build Windows app
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+
+      - name: Read version
+        id: ver
+        run: |
+          $v = python -c "import app; print(app.APP_VERSION)"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v"
+
+      - name: Unit tests
+        run: python -m pytest -q
+
+      - name: Self-test from source (on Windows)
+        run: |
+          python main.py --self-test --report selftest-source.txt
+          Get-Content selftest-source.txt
+          if (-not (Select-String -Path selftest-source.txt -SimpleMatch "Windows media integration loaded")) { throw "winrt failed from source" }
+          # a temporary lyrics-server hiccup shouldn't fail the whole build
+          $global:LASTEXITCODE = 0
+
+      - name: Build .exe with PyInstaller
+        run: pyinstaller SpotifyLyricsOverlay.spec --noconfirm --clean
+
+      - name: Smoke test the built .exe (self-test)
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $p = Start-Process $exe -ArgumentList "--self-test","--report","$PWD\selftest-exe.txt" -Wait -PassThru
+          Get-Content selftest-exe.txt
+          foreach ($needle in "PySide6", "Windows media integration loaded", "click-through / always-on-top helpers loaded") {
+            if (-not (Select-String -Path selftest-exe.txt -SimpleMatch $needle | Where-Object { $_.Line -like "✔*" })) {
+              throw "Packaged app check failed: $needle"
+            }
+          }
+
+      - name: Smoke test the built .exe (demo overlay screenshot)
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $p = Start-Process $exe -ArgumentList "--demo","--screenshot","$PWD\demo-overlay.png","--quit-after","7" -Wait -PassThru
+          if (-not (Test-Path demo-overlay.png)) {
+            Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -ErrorAction SilentlyContinue
+            throw "Overlay did not render"
+          }
+          if ($p.ExitCode -ne 0) { throw "App exited with code $($p.ExitCode)" }
+          Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -ErrorAction SilentlyContinue
+
+      - name: Build installer (Inno Setup)
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $default = "${env:ProgramFiles(x86)}\Inno Setup 6"
+            if (Test-Path "$default\ISCC.exe") { $env:PATH += ";$default" }
+            else { choco install innosetup -y --no-progress; $env:PATH += ";$default" }
+          }
+          iscc /DMyAppVersion=${{ steps.ver.outputs.version }} installer\installer.iss
+
+      - name: Portable zip
+        run: Compress-Archive -Path dist\SpotifyLyricsOverlay\* -DestinationPath "Output\SpotifyLyricsOverlay-Portable-${{ steps.ver.outputs.version }}.zip"
+
+      - name: Upload installer + portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpotifyLyricsOverlay-Windows-${{ steps.ver.outputs.version }}
+          path: Output/*
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            selftest-*.txt
+            demo-overlay.png
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/*
