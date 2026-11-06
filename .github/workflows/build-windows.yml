@@ -87,11 +87,10 @@ jobs:
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
           $cfg = "$env:APPDATA\SpotifyLyricsOverlay\settings.json"
           $shots = [ordered]@{
-            "long-widen"       = @{ song = "1";  at = 22; s = @{ theme = "Neon"; width = 520; long_lines = "widen"; show_album_art = $true; time_display = "left" } }
-            "long-shrink"      = @{ song = "1";  at = 22; s = @{ theme = "Neon"; width = 520; long_lines = "shrink"; show_album_art = $true; time_display = "left" } }
-            "long-wrap"        = @{ song = "1";  at = 22; s = @{ theme = "Neon"; width = 520; long_lines = "wrap"; show_album_art = $true; time_display = "left" } }
-            "japanese-widen"   = @{ song = "jp"; at = 22; s = @{ theme = "Ocean"; highlight_color = "#22D3EE"; highlight_color2 = "#3B82F6"; background_color = "#04121C"; width = 520; long_lines = "widen"; translate_enabled = $true; show_romaji = $true } }
-            "minimal-no-box"   = @{ song = "1";  at = 6;  s = @{ theme = "Minimal"; text_color = "#C8C8D0"; highlight_color = "#FFFFFF"; highlight_color2 = "#FFFFFF"; show_background = $false; background_opacity = 0.0; highlight_style = "glow"; show_title = $false } }
+            "translation-big"   = @{ song = "jp"; at = 6; s = @{ theme = "Neon"; translate_enabled = $true; translation_layout = "big"; show_album_art = $true; time_display = "left" } }
+            "translation-small" = @{ song = "jp"; at = 6; s = @{ theme = "Neon"; translate_enabled = $true; translation_layout = "small"; show_album_art = $true; time_display = "left" } }
+            "translation-big-narrow-romaji" = @{ song = "jp"; at = 6; s = @{ theme = "Ocean"; highlight_color = "#22D3EE"; highlight_color2 = "#3B82F6"; background_color = "#04121C"; width = 360; lines_shown = 2; translate_enabled = $true; translation_layout = "big"; show_romaji = $true; time_display = "elapsed" } }
+            "long-widen"        = @{ song = "1";  at = 22; s = @{ theme = "Neon"; width = 520; long_lines = "widen"; show_album_art = $true; time_display = "left" } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s

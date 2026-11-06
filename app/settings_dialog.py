@@ -41,6 +41,8 @@ LONG_CHOICES = [("widen", "Make the overlay wider (up to the screen edge)"),
 ART_CHOICES = [("auto", "Auto – small when the overlay is narrow"), ("left", "Left side (big)"),
                ("header", "Next to the song title (small)")]
 TIME_CHOICES = [("off", "Off"), ("left", "Time left  (-2:13)"), ("elapsed", "Elapsed / total  (1:32 / 3:45)")]
+TRANSLATION_LAYOUTS = [("big", "Translation big (karaoke), original small underneath"),
+                       ("small", "Original big, translation small underneath")]
 PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
              ("deepl", "DeepL – better quality, needs a free API key")]
 
@@ -249,6 +251,12 @@ class SettingsDialog(QDialog):
         lang.setCurrentIndex(list(LANGUAGES).index(self.s.translate_target))
         lang.currentIndexChanged.connect(lambda i: self._set("translate_target", lang.itemData(i)))
         f.addRow("My language", lang)
+        self._w["translation_layout"] = tl = QComboBox()
+        for key, label in TRANSLATION_LAYOUTS:
+            tl.addItem(label, key)
+        tl.setCurrentIndex([k for k, _ in TRANSLATION_LAYOUTS].index(self.s.translation_layout))
+        tl.currentIndexChanged.connect(lambda i: self._set("translation_layout", tl.itemData(i)))
+        f.addRow("Show translation", tl)
         self._w["translate_provider"] = prov = QComboBox()
         for key, label in PROVIDERS:
             prov.addItem(label, key)

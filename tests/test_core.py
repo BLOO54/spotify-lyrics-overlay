@@ -351,3 +351,17 @@ def test_wrap_rows():
     assert lrc.wrap_rows(widths, [False] * 4, 10, 100) == [[0, 1], [2, 3]]   # no spaces between CJK
     assert lrc.wrap_rows([500, 20], [True, True], 10, 100) == [[0], [1]]     # over-wide piece gets own row
     assert lrc.wrap_rows([], [], 10, 100) == []
+
+
+def test_timed_copy_follows_original_timing():
+    # original line with real word timing: sung from 2.0 s to 4.0 s, next line at 6.0 s
+    lines = lrc.parse_lrc("[00:02.00]<00:02.00>夜空に <00:03.00>光る <00:04.00>\n[00:06.00]next\n")
+    tr = lrc.timed_copy(lines[0], "Shining in the night sky")
+    assert [w.text for w in tr.words] == ["Shining", "in", "the", "night", "sky"]
+    assert tr.words[0].start == 2.0
+    assert abs(tr.words[-1].end - 4.0) < 1e-6          # same singing span as the original words
+    assert tr.start == lines[0].start and tr.end == lines[0].end
+    # original without word timing: falls back to a normal estimate inside the line
+    plain = lrc.parse_lrc("[00:10.00]君の名前を\n[00:14.00]x\n")[0]
+    tr2 = lrc.timed_copy(plain, "Your name")
+    assert tr2.words[0].start == 10.0 and tr2.words[-1].end <= 14.0

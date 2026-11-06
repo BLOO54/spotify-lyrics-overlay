@@ -406,6 +406,11 @@ class Controller(QObject):
         self._extras_key = key
         token = self.fetch_token
         lines = [ln.text for ln in ly.lines]
+        if s.translate_enabled:
+            from .translate import detect_language
+            src = detect_language(lines)
+            if src is not None and src != s.translate_target:
+                self.overlay.set_translation_pending(True)
         opts = dict(translate=s.translate_enabled, romaji=s.show_romaji, target=s.translate_target,
                     provider=s.translate_provider, email=s.translate_email, deepl_key=s.deepl_key)
 
@@ -430,6 +435,8 @@ class Controller(QObject):
     def _on_extras(self, token: int, result):
         if token != self.fetch_token:
             return
+        if isinstance(result, Exception):
+            self.overlay.set_translation_pending(False)
         if isinstance(result, TranslationQuotaError):
             self._warn_once("quota", f"{result}. Translations will work again later – or add an "
                             "email / DeepL key in Settings → Lyrics & translation.")

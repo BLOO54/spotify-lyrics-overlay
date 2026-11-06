@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.3.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.4.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.3.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.4.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -123,7 +123,12 @@ the cover sits small next to the song title when the overlay is narrow, and big 
 ### 🌍 Translation and romaji
 Turn on **"Translate songs that aren't in my language"** in *Lyrics & translation* and pick your language.
 The app detects the song's language and only translates songs that aren't already in yours.
-The translation appears in italics under the current line.
+**Show translation** chooses the layout:
+* **Translation big** (default): the translation is the big karaoke line, and the original lyrics sit small
+  underneath. The highlight moves through the translated words in the same time the original line is sung.
+* **Original big**: the original lyrics stay big, with the translation in small italics underneath.
+
+While a song is being translated you'll see "translating…" for a few seconds.
 
 * **MyMemory** (default): free, no account. About 5,000 characters a day (≈5–10 songs).
   Type **any email address** in the box to raise that to 50,000 a day.

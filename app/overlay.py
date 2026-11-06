@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from . import win32
 from .config import Settings
-from .lrc import Line, Lyrics, split_tokens, wrap_rows
+from .lrc import Line, Lyrics, split_tokens, timed_copy, wrap_rows
 
 LINE_ANIM_SECONDS = 0.28
 SUNG_FADE = 0.35
@@ -96,6 +96,7 @@ class OverlayWindow(QWidget):
         self.status = "Waiting for Spotify…"
         self.lyrics: Lyrics | None = None
         self.extras = None            # translate.Extras
+        self.translation_pending = False   # show "translating…" while we wait
         self.position = 0.0           # lyric time (includes sync adjustment)
         self.play_pos = 0.0           # real song position, for the timer
         self.duration = 0.0
@@ -128,7 +129,42 @@ class OverlayWindow(QWidget):
         return bool(self.s.show_romaji and self.extras is not None and self.extras.romaji)
 
     def _show_translation(self) -> bool:
-        return bool(self.s.translate_enabled and self.extras is not None and self.extras.translations)
+        if not self.s.translate_enabled:
+            return False
+        return bool(self.translation_pending or (self.extras is not None and self.extras.translations))
+
+    def _swap(self) -> bool:
+        """True when the translation should be the big karaoke line."""
+        return bool(self.s.translate_enabled and self.s.translation_layout == "big"
+                    and self.extras is not None and self.extras.translations)
+
+    def _main_text(self, i: int) -> str:
+        if self._swap():
+            return self.extras.translations.get(i, self.lyrics.lines[i].text)
+        return self.lyrics.lines[i].text
+
+    def _under_text(self, i: int) -> str:
+        """What goes in the small row under the big line: the translation, or (swapped) the original."""
+        if self.extras is None:
+            return ""
+        if self._swap():
+            return self.lyrics.lines[i].text if i in self.extras.translations else ""
+        return self.extras.translations.get(i, "")
+
+    def _main_line(self, i: int) -> Line:
+        line = self.lyrics.lines[i]
+        if not self._swap() or i not in self.extras.translations:
+            return line
+        key = (i, id(self.extras), self.s.estimate_word_timing)
+        cache = self.__dict__.setdefault("_swap_cache", {})
+        if key not in cache:
+            copy = timed_copy(line, self.extras.translations[i])
+            if not self.s.estimate_word_timing:
+                copy.words = []
+            if len(cache) > 400:
+                cache.clear()
+            cache[key] = copy
+        return cache[key]
 
     def _header_needed(self) -> bool:
         return self.s.show_title or self.s.time_display != "off" or self._art_mode() == "header"
@@ -197,7 +233,11 @@ class OverlayWindow(QWidget):
         main, ctx, head, extra = self.fonts()
         self._pad = max(10, int(self.s.font_size * 0.45))
         ly = self.lyrics
-        lyric_texts = [ln.text for ln in ly.lines] if (ly and ly.synced) else [self.status]
+        if ly and ly.synced:
+            lyric_texts = [self._main_text(i) for i in range(len(ly.lines))]
+            under_texts = [self._under_text(i) for i in range(len(ly.lines))]
+        else:
+            lyric_texts, under_texts = [self.status], []
 
         # "Make the overlay wider": stretch to fit this song's longest line, but never past the screen
         self._eff_width = self.s.width
@@ -207,8 +247,8 @@ class OverlayWindow(QWidget):
             fm = QFontMetricsF(main)
             widest = max((fm.horizontalAdvance(t) for t in lyric_texts if t), default=0.0)
             extras_texts = []
-            if self._show_translation():
-                extras_texts += list(self.extras.translations.values())
+            if self._show_translation() and self.extras is not None:
+                extras_texts += under_texts
             if self._show_romaji():
                 extras_texts += list(self.extras.romaji.values())
             if extras_texts:
@@ -248,7 +288,7 @@ class OverlayWindow(QWidget):
             n = self._rows_needed(extra_measure, self.extras.romaji.values(), avail, MAX_SIDE_ROWS)
             self._rows.append(("romaji", block(extra, n, 1.2, 1.0)))
         if self._show_translation():
-            n = self._rows_needed(extra_measure, self.extras.translations.values(), avail, MAX_SIDE_ROWS)
+            n = self._rows_needed(extra_measure, under_texts, avail, MAX_SIDE_ROWS)
             self._rows.append(("trans", block(extra, n, 1.2, 1.0)))
         if self.s.lines_shown >= 2:
             self._rows.append(("next", block(ctx, ctx_rows)))
@@ -350,9 +390,16 @@ class OverlayWindow(QWidget):
         else:
             self.word_mode_label = ""
         self.extras = None
+        self.translation_pending = False
         self.apply_settings()         # the height depends on how long this song's lines are
 
+    def set_translation_pending(self, pending: bool):
+        if pending != self.translation_pending:
+            self.translation_pending = pending
+            self.apply_settings()
+
     def set_extras(self, extras):
+        self.translation_pending = False
         self.extras = extras
         self.apply_settings()         # rows appear / disappear / grow
 
@@ -616,22 +663,31 @@ class OverlayWindow(QWidget):
         slide = (1 - a) * self._ctx_h * 0.8
 
         if "prev" in rows and idx - 1 >= 0:
-            self._paint_simple_line(p, ctx_f, lines[idx - 1].text, cy("prev") + slide,
+            self._paint_simple_line(p, ctx_f, self._main_text(idx - 1), cy("prev") + slide,
                                     _qc(text_col, 0.38 * a), area, self._row_caps["prev"])
         if "next" in rows and idx + 1 < len(lines):
-            self._paint_simple_line(p, ctx_f, lines[idx + 1].text or "♪", cy("next") + slide * 0.5,
+            self._paint_simple_line(p, ctx_f, self._main_text(idx + 1) or "♪", cy("next") + slide * 0.5,
                                     _qc(text_col, 0.5), area, self._row_caps["next"])
 
+        if idx >= 0 and not lines[idx].is_break and "trans" in rows and self.extras is None \
+                and self.translation_pending:
+            tf = QFont(extra_f)
+            tf.setItalic(True)
+            self._paint_simple_line(p, tf, "translating…", cy("trans") + slide,
+                                    _qc(text_col, 0.45 * a * self._pulse() / 0.7), area, 1)
         if idx >= 0 and not lines[idx].is_break and self.extras is not None:
             if "romaji" in rows:
                 self._paint_simple_line(p, extra_f, self.extras.romaji.get(idx, ""), cy("romaji") + slide,
                                         _qc(text_col, 0.72 * a), area, MAX_SIDE_ROWS)
             if "trans" in rows:
                 tf = QFont(extra_f)
-                tf.setItalic(True)
-                col = _mix(_qc(text_col), _qc(self.s.highlight_color2), 0.35)
-                self._paint_simple_line(p, tf, self.extras.translations.get(idx, ""), cy("trans") + slide,
-                                        _with_alpha(col, 0.9 * a), area, MAX_SIDE_ROWS)
+                if self._swap():
+                    col = _qc(text_col, 0.7)              # the original lyrics, small and calm
+                else:
+                    tf.setItalic(True)
+                    col = _with_alpha(_mix(_qc(text_col), _qc(self.s.highlight_color2), 0.35), 0.9)
+                self._paint_simple_line(p, tf, self._under_text(idx), cy("trans") + slide,
+                                        _with_alpha(col, col.alphaF() * a), area, MAX_SIDE_ROWS)
 
         if idx < 0:
             remaining = max(0.0, (lines[0].start if lines else 0) - t)
@@ -643,7 +699,7 @@ class OverlayWindow(QWidget):
             self._paint_simple_line(p, main_f, "♪  ♪  ♪", cy("main") + slide,
                                     _qc(text_col, self._pulse() * a), area)
             return
-        self._paint_karaoke_line(p, main_f, line, t, cy("main") + slide, a, area)
+        self._paint_karaoke_line(p, main_f, self._main_line(idx), t, cy("main") + slide, a, area)
 
     # ------------------------------------------------------------ karaoke line
     def _paint_karaoke_line(self, p: QPainter, f: QFont, line: Line, t: float, cy: float,

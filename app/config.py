@@ -75,6 +75,8 @@ class Settings:
     # Translation (off by default; only used for songs not in your language)
     translate_enabled: bool = False
     translate_target: str = "en"
+    translation_layout: str = "big"      # "big" = translation is the big karaoke line, original small below
+                                         # "small" = original big, translation small below
     translate_provider: str = "mymemory"  # "mymemory" (free, no account) | "deepl" (free key)
     translate_email: str = ""            # optional: raises MyMemory's free daily limit
     deepl_key: str = ""                  # your own DeepL API key (stored only on this PC)
@@ -129,6 +131,8 @@ class Settings:
             self.album_art_position = "auto"
         if self.time_display not in ("off", "left", "elapsed"):
             self.time_display = "off"
+        if self.translation_layout not in ("big", "small"):
+            self.translation_layout = "big"
         if self.translate_provider not in ("mymemory", "deepl"):
             self.translate_provider = "mymemory"
         from .themes import HIGHLIGHT_STYLES

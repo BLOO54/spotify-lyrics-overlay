@@ -236,7 +236,7 @@ def parse_lrc(text: str) -> list[Line]:
     return lines
 
 
-def estimate_word_timing(line: Line) -> None:
+def estimate_word_timing(line: Line, sing_end: float | None = None) -> None:
     """Guess per-word timing for a line that only has a start time.
 
     We spread the words over the time the line is likely being sung,
@@ -253,6 +253,8 @@ def estimate_word_timing(line: Line) -> None:
     total = sum(weights)
     # ~0.075 s per weight unit is a comfortable singing pace; never longer than the gap
     sing = min(gap * 0.95, max(0.8, total * 0.075))
+    if sing_end is not None and line.start < sing_end <= line.end + 0.01:
+        sing = sing_end - line.start          # match the time the original words take
     words = []
     t = line.start
     for (tok, space_after), w in zip(pieces, weights):
@@ -261,6 +263,14 @@ def estimate_word_timing(line: Line) -> None:
         t += d
     line.words = words
     line.word_timed = False
+
+
+def timed_copy(line: Line, text: str) -> Line:
+    """A line with different text (e.g. a translation) sung over the same time as `line`."""
+    copy = Line(line.start, line.end, text)
+    sing_end = line.words[-1].end if line.words else None
+    estimate_word_timing(copy, sing_end)
+    return copy
 
 
 def build_lyrics(synced_text: str | None, plain_text: str | None = None,

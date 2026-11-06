@@ -138,3 +138,28 @@ def test_romaji_only_without_internet(tmp_path):
 def test_romaji_real():
     assert T.to_romaji("日本").lower() in ("nihon", "nippon")     # both readings are correct
     assert T.to_romaji("ありがとう").lower().startswith("arigat")
+
+
+def test_mymemory_translates_lines_in_parallel_and_keeps_order(tmp_path):
+    import threading
+    import time as _time
+    active, peak = [0], [0]
+    lock = threading.Lock()
+
+    def slow_opener(req, timeout=None):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(req.full_url).query)["q"][0]
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        _time.sleep(0.2)
+        with lock:
+            active[0] -= 1
+        return FakeResp(json.dumps({"responseData": {"translatedText": "T:" + q}, "responseStatus": 200}).encode())
+
+    lines = [f"夜空の歌 その{i}" for i in range(8)]          # 8 different (invented) Japanese lines
+    t0 = _time.monotonic()
+    ex = T.TranslationService(tmp_path, slow_opener).build(lines, translate=True, romaji=False, target="en")
+    took = _time.monotonic() - t0
+    assert took < 1.0, f"should run in parallel, took {took:.2f}s"   # one-by-one would be 1.6 s
+    assert peak[0] > 1
+    assert [ex.translations[i] for i in range(8)] == ["T:" + ln for ln in lines]   # order kept
