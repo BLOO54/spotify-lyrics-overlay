@@ -204,6 +204,21 @@ if IS_WINDOWS:
         dwmapi = None
 
 
+def transparency_effects_on() -> bool:
+    """Windows Settings → Personalization → Colors → "Transparency effects".
+    When it's off, Windows draws blur-behind as a solid dark panel, so we don't use it."""
+    if not IS_WINDOWS:
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            value, _ = winreg.QueryValueEx(k, "EnableTransparency")
+            return bool(value)
+    except OSError:
+        return True          # setting not present: Windows' default is on
+
+
 def set_frosted(hwnd: int, enabled: bool, tint_hex: str = "#000000", tint_alpha: float = 0.3) -> bool:
     """Turn the blur-behind effect on/off. Returns True if Windows accepted it."""
     if not IS_WINDOWS or not hwnd or _SetWCA is None:
@@ -228,12 +243,14 @@ def set_rounded_shape(hwnd: int, width: int, height: int, radius: int) -> None:
     try:
         if radius > 0:
             rgn = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2)
-            user32.SetWindowRgn(hwnd, rgn, True)       # Windows owns the region afterwards
+            ok_rgn = user32.SetWindowRgn(hwnd, rgn, True)       # Windows owns the region afterwards
         else:
-            user32.SetWindowRgn(hwnd, None, True)
+            ok_rgn = user32.SetWindowRgn(hwnd, None, True)
+        hr = None
         if dwmapi is not None:                          # Windows 11: smooth system rounding too
             pref = ctypes.c_int(DWMWCP_ROUND if radius > 0 else DWMWCP_DONOTROUND)
-            dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
-                                         ctypes.byref(pref), ctypes.sizeof(pref))
+            hr = dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+                                              ctypes.byref(pref), ctypes.sizeof(pref))
+        log.info("rounded shape r=%s: SetWindowRgn=%s DwmCorner=%s", radius, ok_rgn, hr)
     except Exception:
         log.exception("set_rounded_shape failed")

@@ -92,9 +92,14 @@ jobs:
         run: |
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
           $cfg = "$env:APPDATA\SpotifyLyricsOverlay\settings.json"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+          $before = (Get-ItemProperty -Path $key -Name EnableTransparency -ErrorAction SilentlyContinue).EnableTransparency
+          "Windows: $([System.Environment]::OSVersion.VersionString) | Transparency effects before: $before" | Tee-Object -FilePath ci-glass-info.txt
+          # the test runs below: frosted with transparency OFF (should fall back) and ON (should blur)
           $shots = [ordered]@{
             "solid-backdrop"   = @{ song = "1";  at = 6; grab = $true; s = @{ theme = "Neon"; background_style = "solid"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
-            "frosted-backdrop" = @{ song = "1";  at = 6; grab = $true; s = @{ theme = "Neon"; background_style = "frosted"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
+            "frosted-transparency-off" = @{ song = "1"; at = 6; grab = $true; transp = 0; s = @{ theme = "Neon"; background_style = "frosted"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
+            "frosted-backdrop" = @{ song = "1";  at = 6; grab = $true; transp = 1; s = @{ theme = "Neon"; background_style = "frosted"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
             "album-match"      = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; match_album_highlight = $true; match_album_background = $true; show_album_art = $true; translate_enabled = $true; time_display = "left" } }
             "square-corners"   = @{ song = "1";  at = 6; grab = $false; s = @{ theme = "Neon"; corner_radius = 0; lines_shown = 2 } }
           }
@@ -102,6 +107,12 @@ jobs:
             $conf = $shots[$name].s
             $conf["first_run"] = $false
             $conf | ConvertTo-Json | Set-Content -Encoding utf8 $cfg
+            if ($shots[$name].ContainsKey("transp")) {
+              New-Item -Path $key -Force -ErrorAction SilentlyContinue | Out-Null
+              Set-ItemProperty -Path $key -Name EnableTransparency -Value $shots[$name].transp -Type DWord
+              Start-Sleep -Seconds 2
+              "$name : EnableTransparency=$((Get-ItemProperty -Path $key).EnableTransparency)" | Tee-Object -FilePath ci-glass-info.txt -Append
+            }
             $argv = @("--demo","--demo-song",$shots[$name].song,"--demo-start",$shots[$name].at,"--screenshot","$PWD\demo-overlay-$name.png","--quit-after","5")
             if ($shots[$name].grab) { $argv += @("--test-backdrop","--screen-grab","$PWD\demo-overlay-$name-screen.png") }
             Start-Process $exe -ArgumentList $argv -Wait
@@ -155,6 +166,7 @@ jobs:
             selftest-*.txt
             lyrics-check.txt
             ci-app-log.txt
+            ci-glass-info.txt
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false
           overwrite_files: true

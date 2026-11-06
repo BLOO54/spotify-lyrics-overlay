@@ -18,6 +18,7 @@ Album art, when on, sits on the left and the rest moves right.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 
@@ -30,6 +31,8 @@ from . import win32
 from .config import Settings
 from .lrc import Line, Lyrics, split_tokens, timed_copy, wrap_rows
 from .palette import extract_palette, mix_hex
+
+log = logging.getLogger(__name__)
 
 LINE_ANIM_SECONDS = 0.28
 COLOUR_FADE_SECONDS = 0.45     # how quickly colours glide to a new song's palette
@@ -350,12 +353,21 @@ class OverlayWindow(QWidget):
             self._frosted_active = False
             return
         hwnd = int(self.winId())
+        was = self._frosted_active
+        if want and not win32.transparency_effects_on():
+            want = False             # Windows would draw a solid dark box instead of glass
         tint = self.target_colours()["background_color"]
-        self._frosted_active = win32.set_frosted(hwnd, want, tint, min(0.6, self.s.background_opacity * 0.5))
-        if want and not self._frosted_active:
-            win32.set_frosted(hwnd, False)
-        win32.set_rounded_shape(hwnd, self.width(), self.height(),
-                                int(self._radius()) if self._frosted_active else 0)
+        if want:
+            self._frosted_active = win32.set_frosted(hwnd, True, tint, min(0.6, self.s.background_opacity * 0.5))
+        else:
+            self._frosted_active = False
+        if not self._frosted_active and (was or want):
+            win32.set_frosted(hwnd, False)       # make sure the blur is really off
+        if self._frosted_active or was:
+            win32.set_rounded_shape(hwnd, self.width(), self.height(),
+                                    int(self._radius()) if self._frosted_active else 0)
+        log.info("backdrop: wanted=%s frosted_active=%s", self.s.background_style == "frosted",
+                 self._frosted_active)
 
     def target_screen(self):
         screens = QApplication.screens()

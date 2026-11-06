@@ -261,8 +261,14 @@ class SettingsDialog(QDialog):
         bs.setCurrentIndex([k for k, _ in BG_STYLES].index(self.s.background_style))
         bs.currentIndexChanged.connect(lambda i: self._set("background_style", bs.itemData(i)))
         f.addRow("Background style", bs)
-        f.addRow(_hint("Frosted glass needs Windows “Transparency effects” on (Settings → Personalization → "
-                       "Colors). If it's off, the normal background is used."))
+        from . import win32 as _w
+        if _w.IS_WINDOWS and not _w.transparency_effects_on():
+            note = ("⚠ Windows “Transparency effects” is OFF, so frosted glass can't be used right now. "
+                    "Turn it on in Windows Settings → Personalization → Colors.")
+        else:
+            note = ("Frosted glass uses Windows “Transparency effects” (Settings → Personalization → Colors). "
+                    "If that's off, the normal background is used.")
+        f.addRow(_hint(note))
         self._w["corner_radius"] = self._spin(0, 40, "corner_radius", " px")
         f.addRow("Corner rounding", self._w["corner_radius"])
         self._w["background_opacity"] = self._slider("background_opacity", 0)
