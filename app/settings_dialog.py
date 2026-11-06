@@ -168,6 +168,8 @@ class SettingsDialog(QDialog):
     changed = Signal()
     capture_started = Signal()     # a shortcut button is waiting for keys
     capture_finished = Signal()    # done - shortcuts should be registered again
+    check_updates_requested = Signal()
+    update_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -425,7 +427,35 @@ class SettingsDialog(QDialog):
                           ("spotify_only", "Only follow Spotify (ignore other media players)")):
             self._w[key] = self._check(text, key)
             f.addRow(self._w[key])
+
+        sep = QLabel("<b>Updates</b>")
+        sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")
+        f.addRow(sep)
+        self._w["auto_update_check"] = self._check("Check for new versions automatically", "auto_update_check")
+        f.addRow(self._w["auto_update_check"])
+        self.update_label = QLabel(f"You have version {APP_VERSION}.")
+        self.update_label.setWordWrap(True)
+        f.addRow(self.update_label)
+        row = QHBoxLayout()
+        check = QPushButton("Check for updates now")
+        check.clicked.connect(self.check_updates_requested)
+        self.update_btn = QPushButton("Update now")
+        self.update_btn.setStyleSheet("background:#7c3aed; border-color:#a855f7;")
+        self.update_btn.clicked.connect(self.update_requested)
+        self.update_btn.setVisible(False)
+        row.addWidget(check)
+        row.addWidget(self.update_btn)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        f.addRow(holder)
+        f.addRow(_hint("Updating downloads the new version from your GitHub releases page, checks the file, "
+                       "installs it quietly and restarts the overlay. Your settings are kept."))
         return w
+
+    def set_update_status(self, text: str, can_update: bool):
+        self.update_label.setText(text)
+        self.update_btn.setVisible(can_update)
 
     def _shortcuts_tab(self):
         w, f = self._page()

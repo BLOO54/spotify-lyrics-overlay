@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.8.1.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.9.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.8.1.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.9.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -44,6 +44,13 @@ Don't have the project on GitHub yet? See **[BUILD_ON_GITHUB.md](BUILD_ON_GITHUB
 It's about 5 minutes of clicking, with no coding.
 
 ---
+
+### 🔄 Updates
+From version 1.9.0 the app **updates itself**. It checks your GitHub releases page when it starts and every
+few hours. When there's a new version you get a message: click it, or right-click the tray icon → **Update to
+version …**, or use Settings → Behaviour → **Update now**. It downloads the installer, checks the file's
+fingerprint, installs it quietly (no wizard, no admin prompt) and restarts. Your settings stay.
+(The portable zip can't replace itself - it opens the download page instead.)
 
 ## ▶️ Using it
 

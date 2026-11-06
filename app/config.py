@@ -89,6 +89,7 @@ class Settings:
     deepl_key: str = ""                  # your own DeepL API key (stored only on this PC)
     show_romaji: bool = False            # Japanese pronunciation in English letters
     first_run: bool = True
+    auto_update_check: bool = True       # look for new versions on GitHub (start-up + every few hours)
     # Keyboard shortcuts (empty = off). Change them in Settings → Shortcuts.
     hk_toggle: str = "Ctrl+Alt+L"
     hk_click: str = "Ctrl+Alt+K"

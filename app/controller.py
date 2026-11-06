@@ -13,18 +13,18 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QTimer, Signal
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import APP_NAME, win32
+from . import APP_NAME, APP_VERSION, win32
 from .clock import PlaybackClock, PlaybackReport
 from .config import Settings, app_data_dir
 from .lrc import build_lyrics
 from .lyrics_provider import LrclibClient, LyricsNetworkError
 from .media_session import MediaState, MediaWatcher
 from .song_sync import SongSync
-from . import hotkeys
+from . import hotkeys, updater
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
 from .translate import (TranslationKeyError, TranslationQuotaError,
@@ -54,6 +54,8 @@ class _Bridge(QObject):
     lyrics = Signal(int, object)
     extras = Signal(int, object)
     versions = Signal(int, object)
+    update_checked = Signal(object, bool)     # result, silent
+    update_downloaded = Signal(object)
 
 
 class HotkeyFilter(QAbstractNativeEventFilter):
@@ -91,6 +93,11 @@ class Controller(QObject):
         self.bridge.lyrics.connect(self._on_lyrics)
         self.bridge.extras.connect(self._on_extras)
         self.bridge.versions.connect(self._on_versions)
+        self.bridge.update_checked.connect(self._on_update_checked)
+        self.bridge.update_downloaded.connect(self._on_update_downloaded)
+        self.update_info = None
+        self._update_busy = False
+        self._announced_version = None
         self.song_sync = SongSync(app_data_dir() / "song_sync.json")
         self._song_offset_ms = 0
         self._version_busy = False
@@ -135,6 +142,13 @@ class Controller(QObject):
             self.watcher = MediaWatcher(self.bridge.media.emit, self.s.spotify_only)
             self.watcher.start()
 
+        # look for updates a little after start-up, then every few hours
+        if not demo:
+            QTimer.singleShot(8000, lambda: self.s.auto_update_check and self.check_updates(silent=True))
+            self.update_timer = QTimer(self)
+            self.update_timer.timeout.connect(lambda: self.s.auto_update_check and self.check_updates(silent=True))
+            self.update_timer.start(updater.CHECK_EVERY_HOURS * 3600 * 1000)
+
         if self.s.first_run:
             self.s.first_run = False
             self.s.save()
@@ -161,6 +175,11 @@ class Controller(QObject):
         act_version.triggered.connect(self.try_other_version)
         act_refetch = QAction("Reload lyrics", self.menu)
         act_refetch.triggered.connect(self.refetch)
+        self.act_update = QAction("Update available", self.menu)
+        self.act_update.triggered.connect(self.start_update)
+        self.act_update.setVisible(False)
+        act_check = QAction("Check for updates", self.menu)
+        act_check.triggered.connect(lambda: self.check_updates(silent=False))
         act_quit = QAction("Quit", self.menu)
         act_quit.triggered.connect(self.quit)
         self._hk_actions = {"hk_toggle": (self.act_show, "Show overlay"),
@@ -176,13 +195,20 @@ class Controller(QObject):
         for a in (act_earlier, act_later, act_reset, act_version, act_refetch):
             self.menu.addAction(a)
         self.menu.addSeparator()
+        self.menu.addAction(self.act_update)
+        self.menu.addAction(act_check)
         self.menu.addAction(act_quit)
 
         self.tray = QSystemTrayIcon(self.icon, self)
         self.tray.setToolTip(APP_NAME)
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._tray_activated)
+        self.tray.messageClicked.connect(self._tray_message_clicked)
         self.tray.show()
+
+    def _tray_message_clicked(self):
+        if self.update_info is not None:
+            self.start_update()
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:          # left click
@@ -346,9 +372,109 @@ class Controller(QObject):
             # while you press a new shortcut, our own shortcuts must not swallow the keys
             self.settings_dlg.capture_started.connect(self.unregister_hotkeys)
             self.settings_dlg.capture_finished.connect(self._hotkeys_changed)
+            self.settings_dlg.check_updates_requested.connect(lambda: self.check_updates(silent=False))
+            self.settings_dlg.update_requested.connect(self.start_update)
+            self._show_update_status()
         self.settings_dlg.show()
         self.settings_dlg.raise_()
         self.settings_dlg.activateWindow()
+
+    # ------------------------------------------------------------ updates
+    def check_updates(self, silent: bool = True):
+        if self._update_busy:
+            return
+        self._update_busy = True
+        if not silent:
+            self._show_update_status("Checking for updates…")
+
+        def work():
+            try:
+                return updater.check_latest()
+            except Exception as e:
+                return e
+
+        fut = self.pool.submit(work)
+        fut.add_done_callback(lambda f: self.bridge.update_checked.emit(f.result(), silent))
+
+    def _on_update_checked(self, result, silent: bool):
+        self._update_busy = False
+        if isinstance(result, Exception):
+            log.info("Update check failed: %s", result)
+            if not silent:
+                self.tray.showMessage(APP_NAME, "Couldn't check for updates – are you online?",
+                                      QSystemTrayIcon.MessageIcon.Warning, 3000)
+            self._show_update_status("Couldn't check for updates right now.")
+            return
+        self.update_info = result
+        if result is None:
+            if not silent:
+                self.tray.showMessage(APP_NAME, f"You're up to date (version {APP_VERSION}).",
+                                      QSystemTrayIcon.MessageIcon.Information, 3000)
+            self._show_update_status()
+            return
+        self.act_update.setText(f"Update to version {result.version}")
+        self.act_update.setVisible(True)
+        self._show_update_status()
+        if self._announced_version != result.version or not silent:
+            self._announced_version = result.version
+            new = updater.whats_new(result)
+            self.tray.showMessage(APP_NAME, f"Version {result.version} is available"
+                                  + (f": {new}" if new else "") +
+                                  "\nRight-click the tray icon → Update, or click here.",
+                                  QSystemTrayIcon.MessageIcon.Information, 10000)
+
+    def _show_update_status(self, text: str | None = None):
+        if not self.settings_dlg:
+            return
+        info = self.update_info
+        if text is None:
+            text = (f"Version {info.version} is available (you have {APP_VERSION})." if info
+                    else f"You have version {APP_VERSION}.")
+        self.settings_dlg.set_update_status(text, info is not None and not self._update_busy)
+
+    def start_update(self):
+        info = self.update_info
+        if info is None or self._update_busy:
+            return
+        mode = updater.install_mode()
+        if mode != "installed":
+            # the portable zip / source version can't replace itself: open the download page instead
+            QDesktopServices.openUrl(QUrl(info.page_url))
+            self.tray.showMessage(APP_NAME, "This copy wasn't installed with the installer, so it can't update "
+                                  "itself. The download page has been opened.", QSystemTrayIcon.MessageIcon.Information, 6000)
+            return
+        self._update_busy = True
+        self._show_update_status(f"Downloading version {info.version}…")
+        self.tray.showMessage(APP_NAME, f"Downloading version {info.version}…",
+                              QSystemTrayIcon.MessageIcon.Information, 3000)
+
+        def work():
+            try:
+                return updater.download(info)
+            except Exception as e:
+                return e
+
+        fut = self.pool.submit(work)
+        fut.add_done_callback(lambda f: self.bridge.update_downloaded.emit(f.result()))
+
+    def _on_update_downloaded(self, result):
+        if isinstance(result, Exception):
+            self._update_busy = False
+            log.warning("Update download failed: %s", result)
+            self.tray.showMessage(APP_NAME, f"Update failed: {result}", QSystemTrayIcon.MessageIcon.Warning, 6000)
+            self._show_update_status("Update failed – try again later.")
+            return
+        log.info("Installing update from %s", result)
+        self.tray.showMessage(APP_NAME, "Installing the update – the overlay will restart in a few seconds.",
+                              QSystemTrayIcon.MessageIcon.Information, 4000)
+        try:
+            updater.launch_installer(result)
+        except Exception as e:
+            self._update_busy = False
+            self.tray.showMessage(APP_NAME, f"Couldn't start the installer: {e}",
+                                  QSystemTrayIcon.MessageIcon.Warning, 6000)
+            return
+        QTimer.singleShot(1200, self.quit)       # get out of the installer's way
 
     def _hotkeys_changed(self):
         failed = self._register_hotkeys(announce_failures=False)

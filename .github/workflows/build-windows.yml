@@ -42,6 +42,8 @@ jobs:
         run: |
           $v = python -c "import app; print(app.APP_VERSION)"
           "version=$v" >> $env:GITHUB_OUTPUT
+          $notes = (git log -1 --pretty=%s) -replace '^v[0-9.]+:\s*', ''
+          "notes=$notes" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v"
 
       - name: Unit tests
@@ -97,9 +99,7 @@ jobs:
           "Windows: $([System.Environment]::OSVersion.VersionString) | Transparency effects before: $before" | Tee-Object -FilePath ci-glass-info.txt
           # the test runs below: frosted with transparency OFF (should fall back) and ON (should blur)
           $shots = [ordered]@{
-            "art-small"  = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 500; long_lines = "shrink"; show_album_art = $true; album_art_position = "auto"; header_art_size = "small"; time_display = "left"; match_album_highlight = $true } }
-            "art-medium" = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 500; long_lines = "shrink"; show_album_art = $true; album_art_position = "auto"; header_art_size = "medium"; time_display = "left"; match_album_highlight = $true } }
-            "art-large"  = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 500; long_lines = "shrink"; show_album_art = $true; album_art_position = "auto"; header_art_size = "large"; time_display = "left"; match_album_highlight = $true } }
+            "sanity" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; show_album_art = $true; time_display = "left" } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
@@ -130,6 +130,30 @@ jobs:
             else { choco install innosetup -y --no-progress; $env:PATH += ";$default" }
           }
           iscc /DMyAppVersion=${{ steps.ver.outputs.version }} installer\installer.iss
+
+      - name: Test silent install and auto-restart (what the in-app updater does)
+        run: |
+          $setup = Get-ChildItem Output\SpotifyLyricsOverlay-Setup-*.exe | Select-Object -First 1
+          $dir = "$env:LOCALAPPDATA\Programs\Spotify Lyrics Overlay"
+          Get-Process SpotifyLyricsOverlay -ErrorAction SilentlyContinue | Stop-Process -Force
+          $p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/FORCECLOSEAPPLICATIONS","/RESTARTAPP=1" -Wait -PassThru
+          "installer exit code: $($p.ExitCode)" | Tee-Object -FilePath ci-update-check.txt
+          if (-not (Test-Path "$dir\SpotifyLyricsOverlay.exe")) { throw "silent install did not install the app" }
+          if (-not (Test-Path "$dir\unins000.exe")) { throw "no uninstaller - in-app update would not be offered" }
+          Start-Sleep -Seconds 6
+          $running = Get-Process SpotifyLyricsOverlay -ErrorAction SilentlyContinue
+          "app restarted after silent install: $([bool]$running)" | Tee-Object -FilePath ci-update-check.txt -Append
+          if (-not $running) { throw "app was not restarted after the silent install" }
+          $running | Stop-Process -Force
+          Start-Sleep -Seconds 1
+          $r = Start-Process "$dir\SpotifyLyricsOverlay.exe" -ArgumentList "--self-test","--report","$PWD\selftest-installed.txt" -Wait -PassThru
+          Get-Content selftest-installed.txt | Tee-Object -FilePath ci-update-check.txt -Append
+
+      - name: Test the updater against the real GitHub releases page
+        continue-on-error: true
+        run: |
+          python -c "from app import updater as U; i=U.check_latest('0.0.1'); print('latest release:', i.version, '| installer:', i.installer_name, '| size:', i.size, '| sha256 provided:', bool(i.sha256)); p=U.download(i); print('downloaded + verified:', p.name, p.stat().st_size, 'bytes'); print('up to date check for 999.0:', U.check_latest('999.0'))" 2>&1 | Tee-Object -FilePath ci-update-check.txt -Append
+          $global:LASTEXITCODE = 0
 
       - name: Portable zip
         run: Compress-Archive -Path dist\SpotifyLyricsOverlay\* -DestinationPath "Output\SpotifyLyricsOverlay-Portable-${{ steps.ver.outputs.version }}.zip"
@@ -165,6 +189,7 @@ jobs:
             lyrics-check.txt
             ci-app-log.txt
             ci-glass-info.txt
+            ci-update-check.txt
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false
           overwrite_files: true
@@ -182,6 +207,10 @@ jobs:
             selftest-exe.txt
             demo-overlay*.png
           body: |
+            What's new: ${{ steps.ver.outputs.notes }}
+
+            **Already have version 1.9.0 or newer?** The app updates itself: right-click the tray icon → Update.
+
             **Download `SpotifyLyricsOverlay-Setup-${{ steps.ver.outputs.version }}.exe`** and double-click it.
             If Windows says "Windows protected your PC", click **More info → Run anyway** (the app isn't paid-signed).
             Prefer no installer? Download the Portable zip, extract it, and run `SpotifyLyricsOverlay.exe`.
