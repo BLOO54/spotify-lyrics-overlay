@@ -365,3 +365,74 @@ def test_timed_copy_follows_original_timing():
     plain = lrc.parse_lrc("[00:10.00]君の名前を\n[00:14.00]x\n")[0]
     tr2 = lrc.timed_copy(plain, "Your name")
     assert tr2.words[0].start == 10.0 and tr2.words[-1].end <= 14.0
+
+
+# ---------------------------------------------------------------- wrong-version lyrics (invented text)
+WRONG = "[00:00.70]first line\n[02:00.00]middle\n[04:08.61]too late\n[04:11.14]\n"   # runs past a 4:05 song
+RIGHT = "[00:03.20]first line\n[02:02.50]middle\n[04:01.00]last line\n"
+
+
+def test_fits_song():
+    from app.lyrics_provider import fits_song, lyrics_end
+    assert abs(lyrics_end(WRONG) - 251.14) < 1e-6
+    assert not fits_song(WRONG, 245)
+    assert fits_song(RIGHT, 245)
+    assert fits_song(WRONG, 0)            # unknown length: can't judge
+
+
+def test_wrong_version_is_replaced_by_one_that_fits(tmp_path):
+    calls = []
+    routes = [
+        ("/api/get", {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": WRONG}),
+        ("/api/search", [
+            {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": WRONG},
+            {"id": 2, "trackName": "Song", "artistName": "Artist", "duration": 244, "syncedLyrics": RIGHT},
+        ]),
+    ]
+    c = LrclibClient(tmp_path, make_opener(routes, calls))
+    assert c.fetch("Song", "Artist", "Album", 245).synced == RIGHT
+
+
+def test_keeps_only_version_even_if_it_runs_long(tmp_path):
+    routes = [("/api/get", {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": WRONG}),
+              ("/api/search", [{"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": WRONG}])]
+    c = LrclibClient(tmp_path, make_opener(routes, []))
+    assert c.fetch("Song", "Artist", "", 245).synced == WRONG      # better than nothing
+
+
+def test_alternatives_and_remember_choice(tmp_path):
+    third = "[00:05.00]first line\n[04:00.00]end\n"
+    routes = [
+        ("/api/get", {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": RIGHT}),
+        ("/api/search", [
+            {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": RIGHT},
+            {"id": 2, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": WRONG},
+            {"id": 3, "trackName": "Song", "artistName": "Artist", "duration": 246, "syncedLyrics": third},
+            {"id": 4, "trackName": "Other", "artistName": "Nobody", "duration": 100, "syncedLyrics": "[00:01.00]x"},
+        ]),
+    ]
+    calls = []
+    c = LrclibClient(tmp_path, make_opener(routes, calls))
+    alts = c.alternatives("Song", "Artist", "", 245)
+    assert [a.synced for a in alts][:2] == [RIGHT, third]      # fitting versions first, no duplicates
+    assert WRONG in [a.synced for a in alts]                   # the long one is still offered, last
+    assert all("[00:01.00]x" != a.synced for a in alts)        # unrelated song excluded
+    c.remember_choice("Song", "Artist", 245, alts[1])
+    n = len(calls)
+    assert c.fetch("Song", "Artist", "", 245).synced == third  # the chosen version sticks
+    assert len(calls) == n
+
+
+def test_song_sync(tmp_path):
+    from app.song_sync import SongSync
+    p = tmp_path / "song_sync.json"
+    s = SongSync(p)
+    assert s.get("Song", "Artist") == 0
+    s.set("Song", "Artist", 750)
+    s.set("Other", "X", 0)
+    s2 = SongSync(p)
+    assert s2.get("song", "ARTIST") == 750 and s2.get("Other", "X") == 0
+    s2.set("Song", "Artist", 0)
+    assert SongSync(p).get("Song", "Artist") == 0
+    (tmp_path / "bad.json").write_text("{nope", encoding="utf-8")
+    assert SongSync(tmp_path / "bad.json").get("a", "b") == 0     # corrupt file: no crash

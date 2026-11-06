@@ -23,6 +23,7 @@ from .config import Settings, app_data_dir
 from .lrc import build_lyrics
 from .lyrics_provider import LrclibClient, LyricsNetworkError
 from .media_session import MediaState, MediaWatcher
+from .song_sync import SongSync
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
 from .translate import (TranslationKeyError, TranslationQuotaError,
@@ -34,13 +35,14 @@ RETRY_SECONDS = 15
 FRAME_MS = 16          # ~60 fps
 TOPMOST_MS = 2000
 
-HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER = range(1, 6)
+HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER, HK_VERSION = range(1, 7)
 HOTKEYS = {
     HK_TOGGLE: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["L"]),
     HK_CLICK: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["K"]),
     HK_SETTINGS: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["O"]),
     HK_EARLIER: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["LEFT"]),
     HK_LATER: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["RIGHT"]),
+    HK_VERSION: (win32.MOD_CONTROL | win32.MOD_ALT, win32.VK["V"]),
 }
 
 
@@ -55,6 +57,7 @@ class _Bridge(QObject):
     media = Signal(object)
     lyrics = Signal(int, object)
     extras = Signal(int, object)
+    versions = Signal(int, object)
 
 
 class HotkeyFilter(QAbstractNativeEventFilter):
@@ -91,6 +94,10 @@ class Controller(QObject):
         self.bridge.media.connect(self._on_media)
         self.bridge.lyrics.connect(self._on_lyrics)
         self.bridge.extras.connect(self._on_extras)
+        self.bridge.versions.connect(self._on_versions)
+        self.song_sync = SongSync(app_data_dir() / "song_sync.json")
+        self._song_offset_ms = 0
+        self._version_busy = False
 
         self.track_key = None
         self.track: MediaState | None = None
@@ -147,12 +154,14 @@ class Controller(QObject):
         self.act_click.toggled.connect(self.set_click_through)
         act_settings = QAction("Settings…", self.menu)
         act_settings.triggered.connect(self.open_settings)
-        act_earlier = QAction("Lyrics earlier (−250 ms)", self.menu)
+        act_earlier = QAction("This song: lyrics earlier (−250 ms)\tCtrl+Alt+←", self.menu)
         act_earlier.triggered.connect(lambda: self.nudge_offset(+250))
-        act_later = QAction("Lyrics later (+250 ms)", self.menu)
+        act_later = QAction("This song: lyrics later (+250 ms)\tCtrl+Alt+→", self.menu)
         act_later.triggered.connect(lambda: self.nudge_offset(-250))
-        act_reset = QAction("Reset sync adjustment", self.menu)
+        act_reset = QAction("This song: reset sync", self.menu)
         act_reset.triggered.connect(lambda: self.nudge_offset(None))
+        act_version = QAction("Try another lyrics version\tCtrl+Alt+V", self.menu)
+        act_version.triggered.connect(self.try_other_version)
         act_refetch = QAction("Reload lyrics", self.menu)
         act_refetch.triggered.connect(self.refetch)
         act_quit = QAction("Quit", self.menu)
@@ -160,7 +169,7 @@ class Controller(QObject):
         for a in (self.act_show, self.act_click, act_settings):
             self.menu.addAction(a)
         self.menu.addSeparator()
-        for a in (act_earlier, act_later, act_reset, act_refetch):
+        for a in (act_earlier, act_later, act_reset, act_version, act_refetch):
             self.menu.addAction(a)
         self.menu.addSeparator()
         self.menu.addAction(act_quit)
@@ -207,6 +216,8 @@ class Controller(QObject):
             self.nudge_offset(+250)
         elif hid == HK_LATER:
             self.nudge_offset(-250)
+        elif hid == HK_VERSION:
+            self.try_other_version()
 
     # ------------------------------------------------------------ actions
     def set_visible(self, visible: bool):
@@ -239,14 +250,64 @@ class Controller(QObject):
                               QSystemTrayIcon.MessageIcon.Information, 2000)
 
     def nudge_offset(self, delta_ms):
-        self.s.sync_offset_ms = 0 if delta_ms is None else self.s.sync_offset_ms + delta_ms
-        self.s.clamp()
-        self.s.save()
-        if self.settings_dlg:
-            self.settings_dlg.sync_from_settings()
-        self.overlay.set_status(self.overlay.status)
-        self.tray.showMessage(APP_NAME, f"Sync adjustment: {self.s.sync_offset_ms:+d} ms",
+        """Adjust the timing of the song that's playing now (remembered for that song)."""
+        if not (self.track and self.track.title):
+            self.tray.showMessage(APP_NAME, "Play a song first, then adjust its timing.",
+                                  QSystemTrayIcon.MessageIcon.Information, 2000)
+            return
+        title, artist = self.track.title, self.track.artist
+        new = 0 if delta_ms is None else self._song_offset_ms + delta_ms
+        self.song_sync.set(title, artist, new)
+        self._song_offset_ms = self.song_sync.get(title, artist)
+        ms = self._song_offset_ms
+        what = "back to normal" if ms == 0 else (f"{abs(ms) / 1000:.2f} s {'earlier' if ms > 0 else 'later'}")
+        self.tray.showMessage(APP_NAME, f"{title}: lyrics {what} (remembered for this song)",
+                              QSystemTrayIcon.MessageIcon.Information, 1800)
+
+    def try_other_version(self):
+        """Switch to the next timed-lyrics version LRCLIB has for this song."""
+        st = self.track
+        if self.demo or not (st and st.title and st.artist) or self._version_busy:
+            return
+        self._version_busy = True
+        token = self.fetch_token
+        self.tray.showMessage(APP_NAME, "Looking for other lyrics versions…",
                               QSystemTrayIcon.MessageIcon.Information, 1500)
+        title, artist, album, dur = st.title, st.artist, st.album, st.duration
+
+        def work():
+            try:
+                return self.client.alternatives(title, artist, album, dur)
+            except Exception as e:
+                return e
+
+        fut = self.pool.submit(work)
+        fut.add_done_callback(lambda f: self.bridge.versions.emit(token, f.result()))
+
+    def _on_versions(self, token: int, result):
+        self._version_busy = False
+        if token != self.fetch_token or not self.track:
+            return
+        if isinstance(result, Exception):
+            self.tray.showMessage(APP_NAME, "Couldn't reach the lyrics service – try again in a moment.",
+                                  QSystemTrayIcon.MessageIcon.Warning, 2500)
+            return
+        if len(result) <= 1:
+            self.tray.showMessage(APP_NAME, "No other timed versions of this song's lyrics were found. "
+                                  "You can still fix the timing with Ctrl+Alt+← / →.",
+                                  QSystemTrayIcon.MessageIcon.Information, 4000)
+            return
+        current = self._last_result.synced if self._last_result else None
+        idx = next((i for i, r in enumerate(result) if r.synced == current), -1)
+        nxt = (idx + 1) % len(result)
+        chosen = result[nxt]
+        st = self.track
+        self.client.remember_choice(st.title, st.artist, st.duration, chosen)
+        self._last_result = chosen
+        self._extras, self._extras_key = None, None
+        self._show_result(chosen)
+        self.tray.showMessage(APP_NAME, f"Lyrics version {nxt + 1} of {len(result)} (remembered for this song)",
+                              QSystemTrayIcon.MessageIcon.Information, 2500)
 
     def open_settings(self):
         if self.settings_dlg is None:
@@ -325,6 +386,7 @@ class Controller(QObject):
                 PlaybackReport(st.position, st.playing, st.last_updated, st.duration)), st.playing)
             self.overlay.set_track(st.title, st.artist)
             self._extras, self._extras_key = None, None
+            self._song_offset_ms = self.song_sync.get(st.title, st.artist) if st.title else 0
             if not st.title:
                 self.overlay.set_lyrics(None, "")
             elif not st.artist:
@@ -458,5 +520,5 @@ class Controller(QObject):
     def _tick(self):
         if self.overlay.isVisible():
             self.overlay.play_pos = self.clock.position()
-            self.overlay.position = self.clock.position() + self.s.sync_offset_ms / 1000.0
+            self.overlay.position = self.clock.position() + (self.s.sync_offset_ms + self._song_offset_ms) / 1000.0
             self.overlay.update()

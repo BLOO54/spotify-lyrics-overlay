@@ -48,7 +48,8 @@ PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
 
 HOTKEY_HELP = (
     "<b>Ctrl+Alt+L</b> show / hide overlay &nbsp;·&nbsp; <b>Ctrl+Alt+K</b> click-through on/off<br>"
-    "<b>Ctrl+Alt+O</b> open settings &nbsp;·&nbsp; <b>Ctrl+Alt+← / →</b> lyrics earlier / later"
+    "<b>Ctrl+Alt+O</b> open settings &nbsp;·&nbsp; <b>Ctrl+Alt+V</b> try another lyrics version<br>"
+    "<b>Ctrl+Alt+← / →</b> this song's lyrics earlier / later (remembered per song)"
 )
 
 
@@ -237,7 +238,9 @@ class SettingsDialog(QDialog):
         f.addRow(self._w["estimate_word_timing"])
         self._w["sync_offset_ms"] = self._spin(-10000, 10000, "sync_offset_ms", " ms", step=50)
         self._w["sync_offset_ms"].setToolTip("Positive = lyrics appear earlier. Use if lyrics feel late.")
-        f.addRow("Sync adjustment", self._w["sync_offset_ms"])
+        f.addRow("Sync adjustment (all songs)", self._w["sync_offset_ms"])
+        f.addRow(_hint("For just one song, use Ctrl+Alt+← / → while it plays – it's remembered for that song. "
+                       "If a song's lyrics are badly off, try Ctrl+Alt+V for another lyrics version."))
 
         sep = QLabel("<b>Translation</b>")
         sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")

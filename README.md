@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.4.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.5.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.4.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.5.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -70,8 +70,9 @@ The app runs in the **system tray** (the small icons at the bottom-right of the 
 | **Ctrl + Alt + L** | Show / hide the overlay |
 | **Ctrl + Alt + K** | Click-through on / off |
 | **Ctrl + Alt + O** | Open settings |
-| **Ctrl + Alt + ←** | Lyrics earlier (−250 ms) |
-| **Ctrl + Alt + →** | Lyrics later (+250 ms) |
+| **Ctrl + Alt + ←** | This song's lyrics earlier (−250 ms), remembered for this song |
+| **Ctrl + Alt + →** | This song's lyrics later (+250 ms), remembered for this song |
+| **Ctrl + Alt + V** | Try another lyrics version for this song (remembered) |
 
 ### 🖱️ Moving the overlay
 1. Turn **click-through OFF** (Ctrl+Alt+K).
@@ -149,7 +150,9 @@ For a Japanese demo song (to try translation/romaji), run `SpotifyLyricsOverlay.
 | Problem | Fix |
 |---|---|
 | "Waiting for Spotify…" | Use the Spotify **desktop app** (not the web player) and press play. In Windows Settings → System → Notifications, make sure Spotify isn't blocked. |
-| Lyrics are early or late | Use Ctrl+Alt+← / → or Settings → Sync adjustment. |
+| One song's lyrics are early or late | Press Ctrl+Alt+← / → while it plays; the fix is remembered for that song. |
+| One song's lyrics drift further out of time as it plays | The lyrics were timed for a different version of the song. Press **Ctrl+Alt+V** to try another version. |
+| Every song's lyrics are early or late | Settings → Lyrics & translation → Sync adjustment (all songs). |
 | Overlay hidden behind the game | Set the game to **borderless windowed**. |
 | Can't click or move the overlay | Click-through is on. Press **Ctrl+Alt+K**. |
 | Can't find the app | Look in the system tray (^ arrow bottom-right). |

@@ -49,6 +49,12 @@ jobs:
           python -m pytest -q -rA 2>&1 | Tee-Object -FilePath pytest-output.txt
           if ($LASTEXITCODE -ne 0) { throw "Unit tests failed" }
 
+      - name: Lyrics matching check (timing info only)
+        continue-on-error: true
+        run: |
+          python tools/check_song.py "birdbrain" "Jamie Paige" 245 2>&1 | Tee-Object -FilePath lyrics-check.txt
+          $global:LASTEXITCODE = 0
+
       - name: Self-test from source (on Windows)
         run: |
           python main.py --self-test --report selftest-source.txt
@@ -144,6 +150,7 @@ jobs:
           files: |
             pytest-output.txt
             selftest-*.txt
+            lyrics-check.txt
           fail_on_unmatched_files: false
           overwrite_files: true
 

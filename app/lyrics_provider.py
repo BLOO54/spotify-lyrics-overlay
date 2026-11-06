@@ -73,6 +73,28 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", s.lower())
 
 
+_TS = re.compile(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
+FIT_SLACK = 2.5      # seconds of lyrics allowed after the song "ends" (rounding, fades)
+
+
+def lyrics_end(synced: str | None) -> float:
+    """Time of the last timestamp in LRC text (0 if none)."""
+    last = 0.0
+    for m in _TS.finditer(synced or ""):
+        mm, ss, frac = m.groups()
+        t = int(mm) * 60 + int(ss) + (int(frac) / 10 ** len(frac) if frac else 0)
+        last = max(last, t)
+    return last
+
+
+def fits_song(synced: str | None, duration: float) -> bool:
+    """False when the lyrics keep going after the song has ended - a sign they were
+    timed against a different version (edit / remaster / upload) of the song."""
+    if not synced or not duration:
+        return True
+    return lyrics_end(synced) <= duration + FIT_SLACK
+
+
 # --------------------------------------------------------------------------
 class LrclibClient:
     def __init__(self, cache_dir: Path | None = None, opener=None):
@@ -106,7 +128,7 @@ class LrclibClient:
     def _cache_file(self, title, artist, duration) -> Path | None:
         if not self.cache_dir:
             return None
-        key = f"{_norm(title)}|{_norm(artist)}|{int(round(duration or 0))}"
+        key = f"v2|{_norm(title)}|{_norm(artist)}|{int(round(duration or 0))}"
         return self.cache_dir / (hashlib.sha1(key.encode()).hexdigest() + ".json")
 
     def _cache_read(self, f: Path | None) -> LyricsResult | None:
@@ -137,8 +159,9 @@ class LrclibClient:
                             bool(item.get("instrumental")))
 
     @staticmethod
-    def _pick_best(items, title: str, artist: str, duration: float):
-        best, best_score = None, -1e9
+    def _rank(items, title: str, artist: str, duration: float):
+        """Score every candidate; best first. Returns [(score, item)]."""
+        ranked = []
         nt, na = _norm(clean_title(title)), _norm(primary_artist(artist))
         for it in items or []:
             if not isinstance(it, dict):
@@ -165,9 +188,28 @@ class LrclibClient:
                     score -= 60       # very likely a different recording
                 else:
                     score -= diff * 2
-            if score > best_score:
-                best, best_score = it, score
-        return best if best_score > 0 else None
+            if it.get("syncedLyrics") and not fits_song(it["syncedLyrics"], duration):
+                score -= 45           # lyrics run past the end of the song: timed for another version
+            ranked.append((score, it))
+        ranked.sort(key=lambda x: -x[0])
+        return ranked
+
+    @classmethod
+    def _pick_best(cls, items, title: str, artist: str, duration: float):
+        ranked = cls._rank(items, title, artist, duration)
+        return ranked[0][1] if ranked and ranked[0][0] > 0 else None
+
+    def _search_all(self, title: str, artist: str) -> list:
+        ct, pa = clean_title(title), primary_artist(artist)
+        items = list(self._get_json("/search", {"track_name": ct, "artist_name": pa}) or [])
+        if not any(isinstance(i, dict) and i.get("syncedLyrics") for i in items):
+            items += list(self._get_json("/search", {"q": f"{ct} {pa}"}) or [])
+        seen, out = set(), []
+        for it in items:
+            if isinstance(it, dict) and it.get("id", id(it)) not in seen:
+                seen.add(it.get("id", id(it)))
+                out.append(it)
+        return out
 
     # ---- public --------------------------------------------------------
     def fetch(self, title: str, artist: str, album: str = "", duration: float = 0.0) -> LyricsResult:
@@ -187,18 +229,41 @@ class LrclibClient:
             if item:
                 result = self._to_result(item)
 
-        # 2) search with cleaned title / main artist if we still lack synced lyrics
-        if not result.synced and not result.instrumental:
-            ct, pa = clean_title(title), primary_artist(artist)
-            items = self._get_json("/search", {"track_name": ct, "artist_name": pa})
-            best = self._pick_best(items, title, artist, duration)
-            if not best:
-                items = self._get_json("/search", {"q": f"{ct} {pa}"})
-                best = self._pick_best(items, title, artist, duration)
-            if best:
-                cand = self._to_result(best)
+        # 2) search if we still lack synced lyrics, or the ones we got were timed for
+        #    a different version of the song (they run past its end)
+        suspect = bool(result.synced) and not fits_song(result.synced, duration)
+        if suspect:
+            log.info("Lyrics for %s - %s run past the song's end; looking for a better version", artist, title)
+        if (not result.synced and not result.instrumental) or suspect:
+            ranked = [(s, it) for s, it in self._rank(self._search_all(title, artist), title, artist, duration)
+                      if s > 0]
+            fitting = [it for s, it in ranked if it.get("syncedLyrics") and fits_song(it["syncedLyrics"], duration)]
+            if fitting:
+                result = self._to_result(fitting[0])
+            elif ranked and not result.synced:
+                cand = self._to_result(ranked[0][1])
                 if cand.synced or not result.found:
                     result = cand
 
         self._cache_write(cache, result)
         return result
+
+    def alternatives(self, title: str, artist: str, album: str = "", duration: float = 0.0) -> list[LyricsResult]:
+        """All the different timed versions LRCLIB has for this song, best match first."""
+        items = self._search_all(title, artist)
+        if duration:
+            got = self._get_json("/get", {"track_name": title, "artist_name": artist,
+                                          "album_name": album, "duration": int(round(duration))})
+            if isinstance(got, dict):
+                items.insert(0, got)
+        out, seen = [], set()
+        for score, it in self._rank(items, title, artist, duration):
+            synced = it.get("syncedLyrics")
+            if score > 0 and synced and synced not in seen:
+                seen.add(synced)
+                out.append(self._to_result(it))
+        return out
+
+    def remember_choice(self, title: str, artist: str, duration: float, result: LyricsResult) -> None:
+        """Use this version from now on for this song."""
+        self._cache_write(self._cache_file(title, artist, duration), result)
