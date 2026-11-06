@@ -61,6 +61,7 @@ class Settings:
     # Behaviour
     show_title: bool = True
     show_album_art: bool = False
+    album_art_position: str = "auto"     # "auto" | "left" (big) | "header" (small, next to the title)
     time_display: str = "off"            # "off" | "left" (-1:23) | "elapsed" (1:02 / 3:45)
     show_progress: bool = False          # thin song progress bar
     lines_shown: int = 3                 # 1 = current only, 2 = current + next, 3 = previous + current + next
@@ -121,6 +122,8 @@ class Settings:
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
+        if self.album_art_position not in ("auto", "left", "header"):
+            self.album_art_position = "auto"
         if self.time_display not in ("off", "left", "elapsed"):
             self.time_display = "off"
         if self.translate_provider not in ("mymemory", "deepl"):

@@ -30,6 +30,7 @@ class Word:
     text: str          # the word itself, without surrounding spaces
     start: float       # seconds
     end: float         # seconds
+    gap: bool = True   # is there a space after this word? (False inside Japanese/Chinese text)
 
 
 @dataclass
@@ -99,13 +100,84 @@ def _parse_words(body: str, line_start: float) -> tuple[str, list[Word]]:
         end = nxt if nxt is not None else t + 0.6 * len(tokens)
         # if one tag covers several space-separated tokens, split its time evenly
         span = max(end - t, 0.01)
+        trailing_space = text[-1:].isspace()
         for k, tok in enumerate(tokens):
             ws = t + span * k / len(tokens)
             we = t + span * (k + 1) / len(tokens)
-            words.append(Word(tok, ws, we))
+            last = k == len(tokens) - 1
+            words.append(Word(tok, ws, we, gap=(not last) or trailing_space))
 
-    plain = " ".join(w.text for w in words)
-    return plain, words
+    return join_words(words), words
+
+
+def join_words(words) -> str:
+    out = []
+    for i, w in enumerate(words):
+        out.append(w.text)
+        if w.gap and i < len(words) - 1:
+            out.append(" ")
+    return "".join(out)
+
+
+# Japanese / Chinese characters (Korean uses spaces, so it's left alone)
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uff66-\uff9f]")
+# characters that must stay attached to the one before them
+_ATTACH = set("、。，．！？!?,.・ーっゃゅょぁぃぅぇぉッャュョァィゥェォ」』）)〜~…")
+
+
+def split_tokens(text: str) -> list[tuple[str, bool]]:
+    """Split a line into pieces that may be wrapped / highlighted one by one.
+
+    Returns (piece, space_after). Normal words are split at spaces.
+    Japanese/Chinese runs (which have no spaces) are split per character,
+    keeping small kana and punctuation attached, so long lines can wrap and
+    the karaoke highlight can move through them.
+    """
+    out: list[tuple[str, bool]] = []
+    for chunk in text.split():
+        if len(chunk) > 1 and _CJK.search(chunk):
+            pieces: list[str] = []
+            buf = ""
+            for ch in chunk:
+                if _CJK.search(ch):
+                    if buf and not (ch in _ATTACH):
+                        pieces.append(buf)
+                        buf = ""
+                    buf += ch
+                elif ch in _ATTACH or (buf and not _CJK.search(buf[-1]) and not ch.isspace()):
+                    buf += ch          # punctuation or a Latin word continuing
+                else:
+                    if buf:
+                        pieces.append(buf)
+                    buf = ch
+            if buf:
+                pieces.append(buf)
+            for i, piece in enumerate(pieces):
+                out.append((piece, i == len(pieces) - 1))
+        else:
+            out.append((chunk, True))
+    return out
+
+
+def wrap_rows(widths: list[float], gaps: list[bool], space: float, avail: float) -> list[list[int]]:
+    """Greedy line-wrapping. Returns rows as lists of piece indexes."""
+    rows: list[list[int]] = []
+    cur: list[int] = []
+    cur_w = 0.0
+    for i, w in enumerate(widths):
+        if not cur:
+            cur, cur_w = [i], w
+            continue
+        add = (space if gaps[i - 1] else 0.0) + w
+        if cur_w + add > avail:
+            rows.append(cur)
+            cur, cur_w = [i], w
+        else:
+            cur.append(i)
+            cur_w += add
+    if cur:
+        rows.append(cur)
+    return rows
 
 
 def parse_lrc(text: str) -> list[Line]:
@@ -171,10 +243,11 @@ def estimate_word_timing(line: Line) -> None:
     giving longer words more time. If the gap to the next line is long
     (e.g. an instrumental pause), we don't stretch the words across all of it.
     """
-    tokens = line.text.split()
-    if not tokens:
+    pieces = split_tokens(line.text)
+    if not pieces:
         line.words = []
         return
+    tokens = [p for p, _ in pieces]
     gap = max(line.end - line.start, 0.2)
     weights = [len(t) + 1.5 for t in tokens]
     total = sum(weights)
@@ -182,9 +255,9 @@ def estimate_word_timing(line: Line) -> None:
     sing = min(gap * 0.95, max(0.8, total * 0.075))
     words = []
     t = line.start
-    for tok, w in zip(tokens, weights):
+    for (tok, space_after), w in zip(pieces, weights):
         d = sing * w / total
-        words.append(Word(tok, t, t + d))
+        words.append(Word(tok, t, t + d, gap=space_after))
         t += d
     line.words = words
     line.word_timed = False

@@ -76,7 +76,7 @@ class HotkeyFilter(QAbstractNativeEventFilter):
 
 
 class Controller(QObject):
-    def __init__(self, app: QApplication, demo: bool = False, demo_song: str = "1"):
+    def __init__(self, app: QApplication, demo: bool = False, demo_song: str = "1", demo_start: float = 0.0):
         super().__init__()
         self.app = app
         self.s = Settings.load()
@@ -125,7 +125,7 @@ class Controller(QObject):
         if demo:
             from .demo import DemoPlayer
             self.demo_player = DemoPlayer(self.bridge.media.emit, demo_song,
-                                          resource_path("assets/icon.png"))
+                                          resource_path("assets/icon.png"), demo_start)
             self.demo_player.start()
         else:
             self.watcher = MediaWatcher(self.bridge.media.emit, self.s.spotify_only)

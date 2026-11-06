@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.1.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.2.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.1.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.2.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -105,11 +105,15 @@ Open Settings (**Ctrl+Alt+O**, or right-click the tray icon). There are four tab
 | Tab | What's there |
 |---|---|
 | **Look** | Theme presets (Neon, Ocean, Sunset, Sakura, Arcade, Gold, Minimal, Light), font, colours, **highlight style**, glow, "keep sung words coloured", **background box on/off**, opacity |
-| **Layout** | Lines shown (1/2/3), song title, **album art**, **song timer**, progress bar, screen position, monitor, size |
+| **Layout** | Lines shown (1/2/3), song title, **album art** and where it goes, **song timer**, progress bar, screen position, monitor, size |
 | **Lyrics & translation** | Sync adjustment, word-timing estimate, **translation**, **romaji** |
 | **Behaviour** | Click-through, hide while paused, Spotify only |
 
 Pick a theme first, then tweak anything you like (the theme then shows as "Custom").
+
+**Small overlay?** Long lines wrap onto a second or third row instead of running off the edge, and the
+overlay grows a little taller for songs that need it (it never goes off-screen). With **Album art position → Auto**,
+the cover sits small next to the song title when the overlay is narrow, and big on the left when it's wide.
 
 ### 🌍 Translation and romaji
 Turn on **"Translate songs that aren't in my language"** in *Lyrics & translation* and pick your language.

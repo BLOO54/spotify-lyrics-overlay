@@ -87,17 +87,17 @@ jobs:
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
           $cfg = "$env:APPDATA\SpotifyLyricsOverlay\settings.json"
           $shots = [ordered]@{
-            "neon-art-timer"   = @{ song = "1";  s = @{ theme = "Neon"; show_album_art = $true; time_display = "left"; show_progress = $true } }
-            "sunset-grow"      = @{ song = "1";  s = @{ theme = "Sunset"; highlight_color = "#F97316"; highlight_color2 = "#EC4899"; background_color = "#1A0B12"; highlight_style = "grow"; lines_shown = 2 } }
-            "minimal-no-box"   = @{ song = "1";  s = @{ theme = "Minimal"; text_color = "#C8C8D0"; highlight_color = "#FFFFFF"; highlight_color2 = "#FFFFFF"; show_background = $false; background_opacity = 0.0; highlight_style = "glow"; show_title = $false } }
-            "light-underline"  = @{ song = "1";  s = @{ theme = "Light"; text_color = "#1F2937"; highlight_color = "#7C3AED"; highlight_color2 = "#2563EB"; background_color = "#F5F5F7"; background_opacity = 0.85; glow = $false; highlight_style = "underline"; time_display = "elapsed" } }
-            "japanese-translated" = @{ song = "jp"; s = @{ theme = "Ocean"; highlight_color = "#22D3EE"; highlight_color2 = "#3B82F6"; background_color = "#04121C"; translate_enabled = $true; show_romaji = $true; show_album_art = $true; time_display = "left" } }
+            "narrow-long-line"   = @{ song = "1";  at = 26; s = @{ theme = "Neon"; width = 520; show_album_art = $true; album_art_position = "auto"; time_display = "left" } }
+            "narrow-japanese"    = @{ song = "jp"; at = 26; s = @{ theme = "Ocean"; highlight_color = "#22D3EE"; highlight_color2 = "#3B82F6"; background_color = "#04121C"; width = 520; show_album_art = $true; translate_enabled = $true; show_romaji = $true } }
+            "wide-art-left-long" = @{ song = "1";  at = 26; s = @{ theme = "Neon"; width = 1000; show_album_art = $true; album_art_position = "left"; time_display = "left"; show_progress = $true } }
+            "neon-art-timer"     = @{ song = "1";  at = 6;  s = @{ theme = "Neon"; show_album_art = $true; time_display = "left"; show_progress = $true } }
+            "minimal-no-box"     = @{ song = "1";  at = 6;  s = @{ theme = "Minimal"; text_color = "#C8C8D0"; highlight_color = "#FFFFFF"; highlight_color2 = "#FFFFFF"; show_background = $false; background_opacity = 0.0; highlight_style = "glow"; show_title = $false } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
             $conf["first_run"] = $false
             $conf | ConvertTo-Json | Set-Content -Encoding utf8 $cfg
-            Start-Process $exe -ArgumentList "--demo","--demo-song",$shots[$name].song,"--screenshot","$PWD\demo-overlay-$name.png","--quit-after","7" -Wait
+            Start-Process $exe -ArgumentList "--demo","--demo-song",$shots[$name].song,"--demo-start",$shots[$name].at,"--screenshot","$PWD\demo-overlay-$name.png","--quit-after","4" -Wait
             if (-not (Test-Path "demo-overlay-$name.png")) {
               Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 40 -ErrorAction SilentlyContinue
               throw "No screenshot for $name"

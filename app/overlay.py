@@ -28,10 +28,12 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from . import win32
 from .config import Settings
-from .lrc import Line, Lyrics
+from .lrc import Line, Lyrics, split_tokens, wrap_rows
 
 LINE_ANIM_SECONDS = 0.28
 SUNG_FADE = 0.35
+MAX_MAIN_ROWS = 3      # a long current line may wrap onto up to 3 rows
+MAX_SIDE_ROWS = 2      # previous / next / romaji / translation: up to 2 rows
 
 
 def _qc(hex_str: str, alpha: float = 1.0) -> QColor:
@@ -129,32 +131,99 @@ class OverlayWindow(QWidget):
         return bool(self.s.translate_enabled and self.extras is not None and self.extras.translations)
 
     def _header_needed(self) -> bool:
-        return self.s.show_title or self.s.time_display != "off"
+        return self.s.show_title or self.s.time_display != "off" or self._art_mode() == "header"
+
+    def _art_mode(self):
+        """Where the album art goes: None, "left" (big) or "header" (small, next to the title)."""
+        if not self.s.show_album_art:
+            return None
+        pos = self.s.album_art_position
+        if pos == "auto":
+            pos = "left" if self.s.width >= 700 else "header"
+        return pos
+
+    def _left_art_side(self) -> int:
+        return int(min(self.s.width * 0.22, self.s.font_size * 4.2))
+
+    def lyric_area(self):
+        """Horizontal space the lyrics may use (left, right)."""
+        left, right = float(self._pad), float(self.s.width - self._pad)
+        if self._art_mode() == "left" and self._art_bytes:
+            left += self._left_art_side() + self._pad * 0.8
+        return left, right
+
+    def _pieces(self, fm: QFontMetricsF, tokens):
+        widths = [fm.horizontalAdvance(t) for t, _ in tokens]
+        gaps = [g for _, g in tokens]
+        return widths, gaps
+
+    def _fit_tokens(self, f: QFont, tokens, avail: float, max_rows: int):
+        """Pick a font size so the text fits in max_rows rows; returns (font, rows, widths, gaps)."""
+        size = f.pixelSize()
+        floor = max(8, int(size * 0.55))
+        while True:
+            fm = QFontMetricsF(f)
+            widths, gaps = self._pieces(fm, tokens)
+            rows = wrap_rows(widths, gaps, fm.horizontalAdvance(" "), avail)
+            too_wide = widths and max(widths) > avail
+            if (len(rows) <= max_rows and not too_wide) or f.pixelSize() <= floor:
+                return f, rows, widths, gaps
+            f = QFont(f)
+            f.setPixelSize(max(floor, int(f.pixelSize() * 0.9)))
+
+    def _rows_needed(self, f: QFont, texts, avail: float, cap: int) -> int:
+        fm = QFontMetricsF(f)
+        space = fm.horizontalAdvance(" ")
+        best = 1
+        for t in texts:
+            tokens = split_tokens(t or "")
+            if not tokens:
+                continue
+            widths, gaps = self._pieces(fm, tokens)
+            best = max(best, min(cap, len(wrap_rows(widths, gaps, space, avail))))
+            if best >= cap:
+                break
+        return best
 
     def apply_settings(self):
         main, ctx, head, extra = self.fonts()
         self._pad = max(10, int(self.s.font_size * 0.45))
-        ctx_h = QFontMetricsF(ctx).height() * 1.25
-        extra_h = QFontMetricsF(extra).height() * 1.2
+        left, right = self.lyric_area()
+        avail = right - left - self._pad * 0.5
+
+        ly = self.lyrics
+        lyric_texts = [ln.text for ln in ly.lines] if (ly and ly.synced) else [self.status]
+        main_rows = self._rows_needed(main, lyric_texts, avail, MAX_MAIN_ROWS)
+        ctx_rows = self._rows_needed(ctx, lyric_texts, avail, MAX_SIDE_ROWS) if (ly and ly.synced) else 1
+
+        def block(f, rows, first=1.25, more=1.05):
+            return QFontMetricsF(f).height() * (first + more * (rows - 1))
+
         self._rows = []
         if self._header_needed():
             self._rows.append(("header", QFontMetricsF(head).height() * 1.6))
         if self.s.lines_shown >= 3:
-            self._rows.append(("prev", ctx_h))
-        self._rows.append(("main", QFontMetricsF(main).height() * 1.25))
+            self._rows.append(("prev", block(ctx, ctx_rows)))
+        self._rows.append(("main", block(main, main_rows)))
         if self._show_romaji():
-            self._rows.append(("romaji", extra_h))
+            n = self._rows_needed(extra, self.extras.romaji.values(), avail, MAX_SIDE_ROWS)
+            self._rows.append(("romaji", block(extra, n, 1.2, 1.0)))
         if self._show_translation():
-            self._rows.append(("trans", extra_h))
+            n = self._rows_needed(extra, self.extras.translations.values(), avail, MAX_SIDE_ROWS)
+            self._rows.append(("trans", block(extra, n, 1.2, 1.0)))
         if self.s.lines_shown >= 2:
-            self._rows.append(("next", ctx_h))
-        self._ctx_h = ctx_h
+            self._rows.append(("next", block(ctx, ctx_rows)))
+        self._row_caps = {"main": MAX_MAIN_ROWS, "prev": ctx_rows, "next": ctx_rows,
+                          "romaji": MAX_SIDE_ROWS, "trans": MAX_SIDE_ROWS}
+        self._ctx_h = QFontMetricsF(ctx).height() * 1.25
         self._progress_h = 8 if self.s.show_progress else 0
-        h = int(self._pad * 2 + sum(r[1] for r in self._rows) + self._progress_h)
-        self.setFixedSize(self.s.width, h)
+        h = self._pad * 2 + sum(r[1] for r in self._rows) + self._progress_h
+        if self._art_mode() == "left" and self._art_bytes:
+            h = max(h, self._left_art_side() + self._pad * 2 + self._progress_h)
+        self.setFixedSize(self.s.width, int(h))
         self.setWindowOpacity(self.s.window_opacity)
         self._art_pix = None          # re-scale album art for the new size
-        self.reposition()             # keeps the overlay anchored when its height changes
+        self.reposition()             # keeps the overlay anchored (and on-screen) when its size changes
         self.apply_click_through()
         self.update()
 
@@ -187,6 +256,9 @@ class OverlayWindow(QWidget):
                 y = g.bottom() - h - m
             else:
                 y = g.top() + (g.height() - h) // 2
+        # never let the overlay hang off the edge of the screen
+        x = max(g.left(), min(int(x), g.left() + g.width() - w))
+        y = max(g.top(), min(int(y), g.top() + g.height() - h))
         self.move(int(x), int(y))
 
     def apply_click_through(self):
@@ -218,8 +290,11 @@ class OverlayWindow(QWidget):
     def set_album_art(self, data: bytes | None):
         if data is self._art_bytes:
             return
+        had = bool(self._art_bytes)
         self._art_bytes = data
         self._art_pix = None
+        if had != bool(data) and self._art_mode() == "left":
+            self.apply_settings()     # make / free room for the big album art
         self.update()
 
     def set_lyrics(self, lyrics: Lyrics | None, status: str = ""):
@@ -235,17 +310,19 @@ class OverlayWindow(QWidget):
                 self.word_mode_label = "line sync"
         else:
             self.word_mode_label = ""
-        self.set_extras(None)
+        self.extras = None
+        self.apply_settings()         # the height depends on how long this song's lines are
 
     def set_extras(self, extras):
-        had = (self._show_romaji(), self._show_translation())
         self.extras = extras
-        if had != (self._show_romaji(), self._show_translation()):
-            self.apply_settings()    # rows appear / disappear
-        self.update()
+        self.apply_settings()         # rows appear / disappear / grow
 
     def set_status(self, status: str):
+        if status == self.status:
+            return
         self.status = status
+        if not (self.lyrics and self.lyrics.synced):
+            self.apply_settings()     # a long message may need two rows
         self.update()
 
     # ------------------------------------------------------------ mouse
@@ -304,26 +381,38 @@ class OverlayWindow(QWidget):
                                 Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         p.fillPath(path, brush)
 
-    def _fit_font(self, f: QFont, text: str, avail: float) -> QFont:
-        fm = QFontMetricsF(f)
-        w = fm.horizontalAdvance(text)
-        if w <= avail or w == 0:
-            return f
-        nf = QFont(f)
-        nf.setPixelSize(max(8, int(f.pixelSize() * max(0.5, avail / w))))
-        return nf
+    def _row_layout(self, rows, widths, gaps, space, left, right):
+        """Yield (row_index, [(piece_index, x)]) with every row centred."""
+        for r, row in enumerate(rows):
+            row_w = sum(widths[i] for i in row) + sum(space for i in row[:-1] if gaps[i])
+            x = (left + right - row_w) / 2
+            placed = []
+            for i in row:
+                placed.append((i, x))
+                x += widths[i] + (space if gaps[i] else 0.0)
+            yield r, placed
 
-    def _paint_simple_line(self, p, f: QFont, text: str, cy: float, color: QColor, area):
+    def _paint_simple_line(self, p, f: QFont, text: str, cy: float, color: QColor, area, max_rows: int = 1):
+        """Draw plain (non-karaoke) text centred at cy, wrapping onto up to max_rows rows."""
         if not text or color.alphaF() <= 0.01:
             return
         left, right = area
-        avail = right - left - self._pad
-        f = self._fit_font(f, text, avail)
+        avail = right - left - self._pad * 0.5
+        tokens = split_tokens(text)
+        if not tokens:
+            return
+        f, rows, widths, gaps = self._fit_tokens(f, tokens, avail, max_rows)
         fm = QFontMetricsF(f)
-        text = fm.elidedText(text, Qt.TextElideMode.ElideRight, avail)
-        x = (left + right - fm.horizontalAdvance(text)) / 2
-        base = cy + (fm.ascent() - fm.descent()) / 2
-        self._draw_text(p, self._text_path(f, x, base, text), color, 0.45 * color.alphaF())
+        if len(rows) > max_rows:              # still too long: cut the last row with "…"
+            rows = rows[:max_rows - 1] + [[i for row in rows[max_rows - 1:] for i in row]]
+        line_h = fm.height() * 1.05
+        first_cy = cy - line_h * (len(rows) - 1) / 2
+        for r, row in enumerate(rows):
+            row_text = "".join(tokens[i][0] + (" " if gaps[i] and i != row[-1] else "") for i in row)
+            row_text = fm.elidedText(row_text, Qt.TextElideMode.ElideRight, avail)
+            x = (left + right - fm.horizontalAdvance(row_text)) / 2
+            base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
+            self._draw_text(p, self._text_path(f, x, base, row_text), color, 0.45 * color.alphaF())
 
     def time_text(self) -> str:
         if self.s.time_display == "off" or self.duration <= 0:
@@ -340,21 +429,24 @@ class OverlayWindow(QWidget):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         self._paint_background(p)
 
-        left, right = float(self._pad), float(self.width() - self._pad)
-        art_side = self.height() - self._pad * 2 - self._progress_h
-        if self.s.show_album_art and self._art_bytes and art_side > 16:
-            self._paint_art(p, left, self._pad, art_side)
-            left += art_side + self._pad * 0.8
-        area = (left, right)
+        if self._art_mode() == "left" and self._art_bytes:
+            side = self._left_art_side()
+            top = (self.height() - self._progress_h - side) / 2
+            self._paint_art(p, float(self._pad), top, side)
+        area = self.lyric_area()
 
         main_f, ctx_f, head_f, extra_f = self.fonts()
         y = float(self._pad)
+        if self._art_mode() == "left" and self._art_bytes:
+            # centre the text block vertically next to tall album art
+            used = sum(h for _, h in self._rows)
+            y = max(y, (self.height() - self._progress_h - used) / 2)
         centers = {}
         for name, h in self._rows:
             centers[name] = (y, h)
             y += h
         if "header" in centers:
-            self._paint_header(p, head_f, centers["header"][0], area)
+            self._paint_header(p, head_f, centers["header"], area)
         self._paint_lyrics(p, main_f, ctx_f, extra_f, centers, area)
         if self._progress_h:
             self._paint_progress(p, area)
@@ -379,34 +471,44 @@ class OverlayWindow(QWidget):
             p.setPen(QPen(QBrush(g), 1.4))
             p.drawRoundedRect(r, radius, radius)
 
-    def _paint_art(self, p: QPainter, x: float, y: float, side: float):
+    def _paint_art(self, p: QPainter, x: float, y: float, side: float, radius: float = 10):
         size = int(side)
-        if self._art_pix is None or self._art_pix.width() != size:
+        if size < 8:
+            return
+        if self._art_pix is None or self._art_pix.width() < size:
             pix = QPixmap()
             if not pix.loadFromData(self._art_bytes) or pix.isNull():
                 return
-            self._art_pix = pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            big = max(size, self._left_art_side())
+            self._art_pix = pix.scaled(big, big, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                        Qt.TransformationMode.SmoothTransformation)
         rect = QRectF(x, y, size, size)
         clip = QPainterPath()
-        clip.addRoundedRect(rect, 10, 10)
+        clip.addRoundedRect(rect, radius, radius)
         p.save()
         p.setClipPath(clip)
-        src = QRectF((self._art_pix.width() - size) / 2, (self._art_pix.height() - size) / 2, size, size)
+        pw, ph = self._art_pix.width(), self._art_pix.height()
+        side_src = min(pw, ph)
+        src = QRectF((pw - side_src) / 2, (ph - side_src) / 2, side_src, side_src)
         p.drawPixmap(rect, self._art_pix, src)
         p.restore()
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(QBrush(_qc(self.s.highlight_color, 0.35)), 1.0))
-        p.drawRoundedRect(rect, 10, 10)
+        p.drawRoundedRect(rect, radius, radius)
 
-    def _paint_header(self, p: QPainter, f: QFont, y: float, area):
+    def _paint_header(self, p: QPainter, f: QFont, row, area):
+        y, row_h = row
         left, right = area
         fm = QFontMetricsF(f)
         x = left + self._pad * 0.4
         right -= self._pad * 0.4
+        if self._art_mode() == "header" and self._art_bytes:
+            # small album art in front of the title
+            side = min(row_h * 0.95, fm.height() * 1.45)
+            self._paint_art(p, x, y + (row_h - side) / 2 - fm.height() * 0.1, side, radius=4)
+            x += side + 8
         base = y + fm.ascent()
         p.setFont(f)
-        # right side: sync mode + timer
         t = self.time_text()
         right_edge = right
         if t:
@@ -419,7 +521,7 @@ class OverlayWindow(QWidget):
             label = (label + " · " if label else "") + self.extras.label
         if self.s.show_title and label:
             lw = fm.horizontalAdvance(label)
-            if right_edge - lw > x + 120:
+            if right_edge - lw > x + 160:          # only if there's room left for the title
                 p.setPen(_qc(self.s.highlight_color, 0.75))
                 p.drawText(QPointF(right_edge - lw, base), label)
                 right_edge -= lw + 14
@@ -429,7 +531,7 @@ class OverlayWindow(QWidget):
                 text = f"{icon}{self.title}  —  {self.artist}" if self.artist else f"{icon}{self.title}"
             else:
                 text = "♪ Spotify Lyrics Overlay"
-            text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(40.0, right_edge - x))
+            text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x))
             p.setPen(_qc(self.s.text_color, 0.72))
             p.drawText(QPointF(x, base), text)
 
@@ -462,8 +564,7 @@ class OverlayWindow(QWidget):
         text_col = self.s.text_color
         if not ly or not ly.synced:
             msg = self.status or ("Instrumental ♪" if ly and ly.instrumental else "")
-            self._paint_simple_line(p, ctx_f if len(msg) > 40 else main_f, msg, cy("main"),
-                                    _qc(text_col, 0.7), area)
+            self._paint_simple_line(p, main_f, msg, cy("main"), _qc(text_col, 0.7), area, MAX_MAIN_ROWS)
             return
 
         t = self.position
@@ -477,21 +578,21 @@ class OverlayWindow(QWidget):
 
         if "prev" in rows and idx - 1 >= 0:
             self._paint_simple_line(p, ctx_f, lines[idx - 1].text, cy("prev") + slide,
-                                    _qc(text_col, 0.38 * a), area)
+                                    _qc(text_col, 0.38 * a), area, self._row_caps["prev"])
         if "next" in rows and idx + 1 < len(lines):
             self._paint_simple_line(p, ctx_f, lines[idx + 1].text or "♪", cy("next") + slide * 0.5,
-                                    _qc(text_col, 0.5), area)
+                                    _qc(text_col, 0.5), area, self._row_caps["next"])
 
         if idx >= 0 and not lines[idx].is_break and self.extras is not None:
             if "romaji" in rows:
                 self._paint_simple_line(p, extra_f, self.extras.romaji.get(idx, ""), cy("romaji") + slide,
-                                        _qc(text_col, 0.72 * a), area)
+                                        _qc(text_col, 0.72 * a), area, MAX_SIDE_ROWS)
             if "trans" in rows:
                 tf = QFont(extra_f)
                 tf.setItalic(True)
                 col = _mix(_qc(text_col), _qc(self.s.highlight_color2), 0.35)
                 self._paint_simple_line(p, tf, self.extras.translations.get(idx, ""), cy("trans") + slide,
-                                        _with_alpha(col, 0.9 * a), area)
+                                        _with_alpha(col, 0.9 * a), area, MAX_SIDE_ROWS)
 
         if idx < 0:
             remaining = max(0.0, (lines[0].start if lines else 0) - t)
@@ -509,63 +610,71 @@ class OverlayWindow(QWidget):
     def _paint_karaoke_line(self, p: QPainter, f: QFont, line: Line, t: float, cy: float,
                             alpha: float, area):
         left, right = area
-        avail = right - left - self._pad
-        f = self._fit_font(f, line.text, avail)
-        fm = QFontMetricsF(f)
-        base = cy + (fm.ascent() - fm.descent()) / 2
+        avail = right - left - self._pad * 0.5
         text_c = _qc(self.s.text_color, alpha)
         hi1 = _qc(self.s.highlight_color, alpha)
         hi2 = _qc(self.s.highlight_color2, alpha)
         oa = 0.55 * alpha
         style = self.s.highlight_style
 
+        if line.words:
+            tokens = [(w.text, w.gap) for w in line.words]
+        else:
+            tokens = split_tokens(line.text)
+        if not tokens:
+            return
+        f, rows, widths, gaps = self._fit_tokens(f, tokens, avail, MAX_MAIN_ROWS)
+        fm = QFontMetricsF(f)
+        space = fm.horizontalAdvance(" ")
+        line_h = fm.height() * 1.05
+        first_cy = cy - line_h * (len(rows) - 1) / 2
+        layout = list(self._row_layout(rows, widths, gaps, space, left, right))
+
         if not line.words:
-            # ---- line-by-line mode: whole line lit, thin progress bar underneath
-            text = fm.elidedText(line.text, Qt.TextElideMode.ElideRight, avail)
-            w = fm.horizontalAdvance(text)
-            x = (left + right - w) / 2
-            self._draw_text(p, self._text_path(f, x, base, text), text_c, oa, glow=hi1)
+            # ---- line-by-line mode: whole line lit, thin progress bar under the last row
+            for r, placed in layout:
+                base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
+                for i, x in placed:
+                    self._draw_text(p, self._text_path(f, x, base, tokens[i][0]), text_c, oa, glow=hi1)
+            last = layout[-1][1]
+            x0 = min(x for _, x in layout[0][1] + last)
+            x1 = max(x + widths[i] for r, placed in layout for i, x in placed)
             prog = _clamp01((t - line.start) / max(line.end - line.start, 0.1))
-            bar_y = base + fm.descent() + 4
+            bar_y = first_cy + (len(rows) - 1) * line_h + (fm.ascent() - fm.descent()) / 2 + fm.descent() + 4
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(_qc(self.s.text_color, 0.15 * alpha))
-            p.drawRoundedRect(QRectF(x, bar_y, w, 3), 1.5, 1.5)
-            g = QLinearGradient(x, 0, x + w, 0)
+            p.drawRoundedRect(QRectF(x0, bar_y, x1 - x0, 3), 1.5, 1.5)
+            g = QLinearGradient(x0, 0, x1, 0)
             g.setColorAt(0, hi1)
             g.setColorAt(1, hi2)
             p.setBrush(QBrush(g))
-            p.drawRoundedRect(QRectF(x, bar_y, w * prog, 3), 1.5, 1.5)
+            p.drawRoundedRect(QRectF(x0, bar_y, (x1 - x0) * prog, 3), 1.5, 1.5)
             return
 
-        # ---- word-by-word karaoke
-        space = fm.horizontalAdvance(" ")
-        widths = [fm.horizontalAdvance(w.text) for w in line.words]
-        total = sum(widths) + space * (len(widths) - 1)
-        x = (left + right - total) / 2
-        top = base - fm.ascent()
-        height = fm.height()
+        # ---- word-by-word karaoke, row by row
         sung_target = _mix(text_c, hi1, 0.45) if self.s.keep_sung_colored else text_c
-
-        for word, w in zip(line.words, widths):
-            path = self._text_path(f, x, base, word.text)
-            grad = QLinearGradient(x, 0, x + max(w, 1), 0)
-            grad.setColorAt(0, hi1)
-            grad.setColorAt(1, hi2)
-
-            if t >= word.end:
-                # already sung: fade from the highlight to the "sung" colour
-                fade = _clamp01((t - word.end) / SUNG_FADE)
-                c = _mix(hi1, sung_target, fade)
-                self._draw_text(p, path, c, oa, glow=hi1 if fade < 1 else None, glow_strength=1 - fade)
-            elif t >= word.start:
-                dur = max(word.end - word.start, 0.01)
-                prog = _clamp01((t - word.start) / dur)
-                since = t - word.start
-                self._paint_current_word(p, path, grad, style, x, w, base, top, height, fm,
-                                         prog, since, text_c, hi1, oa)
-            else:
-                self._draw_text(p, path, _with_alpha(text_c, 0.9 * alpha), oa)
-            x += w + space
+        height = fm.height()
+        for r, placed in layout:
+            base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
+            top = base - fm.ascent()
+            for i, x in placed:
+                word = line.words[i]
+                w = widths[i]
+                path = self._text_path(f, x, base, word.text)
+                grad = QLinearGradient(x, 0, x + max(w, 1), 0)
+                grad.setColorAt(0, hi1)
+                grad.setColorAt(1, hi2)
+                if t >= word.end:
+                    fade = _clamp01((t - word.end) / SUNG_FADE)
+                    c = _mix(hi1, sung_target, fade)
+                    self._draw_text(p, path, c, oa, glow=hi1 if fade < 1 else None, glow_strength=1 - fade)
+                elif t >= word.start:
+                    dur = max(word.end - word.start, 0.01)
+                    self._paint_current_word(p, path, grad, style, x, w, base, top, height, fm,
+                                             _clamp01((t - word.start) / dur), t - word.start,
+                                             text_c, hi1, oa)
+                else:
+                    self._draw_text(p, path, _with_alpha(text_c, 0.9 * alpha), oa)
 
     def _paint_current_word(self, p, path, grad, style, x, w, base, top, height, fm,
                             prog, since, text_c, hi1, oa):

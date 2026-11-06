@@ -35,6 +35,8 @@ LINE_CHOICES = [
     "2 lines – current + next",
     "3 lines – previous, current, next",
 ]
+ART_CHOICES = [("auto", "Auto – small when the overlay is narrow"), ("left", "Left side (big)"),
+               ("header", "Next to the song title (small)")]
 TIME_CHOICES = [("off", "Off"), ("left", "Time left  (-2:13)"), ("elapsed", "Elapsed / total  (1:32 / 3:45)")]
 PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
              ("deepl", "DeepL – better quality, needs a free API key")]
@@ -181,6 +183,12 @@ class SettingsDialog(QDialog):
         f.addRow(self._w["show_title"])
         self._w["show_album_art"] = self._check("Show album art", "show_album_art")
         f.addRow(self._w["show_album_art"])
+        self._w["album_art_position"] = ab = QComboBox()
+        for key, label in ART_CHOICES:
+            ab.addItem(label, key)
+        ab.setCurrentIndex([k for k, _ in ART_CHOICES].index(self.s.album_art_position))
+        ab.currentIndexChanged.connect(lambda i: self._set("album_art_position", ab.itemData(i)))
+        f.addRow("Album art position", ab)
         self._w["time_display"] = tb = QComboBox()
         for key, label in TIME_CHOICES:
             tb.addItem(label, key)

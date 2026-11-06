@@ -317,3 +317,37 @@ def test_lines_shown_setting_and_migration(tmp_path, monkeypatch):
     assert Settings.load().lines_shown == 2
     Settings.path().write_text(json.dumps({"lines_shown": 9}), encoding="utf-8")
     assert Settings.load().lines_shown == 3
+
+
+# ---------------------------------------------------------------- wrapping (invented text)
+def test_split_tokens_latin_and_japanese():
+    assert lrc.split_tokens("hello bright  world") == [("hello", True), ("bright", True), ("world", True)]
+    toks = lrc.split_tokens("君の名前を呼んでいる、ずっと")
+    assert "".join(t for t, _ in toks) == "君の名前を呼んでいる、ずっと"
+    assert all(not gap for _, gap in toks[:-1]) and toks[-1][1]
+    assert ("る、", False) in toks              # punctuation stays attached
+    assert ("ょ" not in [t for t, _ in lrc.split_tokens("きょう")])  # small kana attached
+    mixed = lrc.split_tokens("Oh yeah 一緒に")
+    assert mixed[:2] == [("Oh", True), ("yeah", True)]
+
+
+def test_estimated_japanese_words_have_no_spaces():
+    ly = lrc.build_lyrics("[00:01.00]夜空に光る\n[00:05.00]next line\n")
+    w = ly.lines[0].words
+    assert len(w) == 5 and lrc.join_words(w) == "夜空に光る"
+    assert w[0].start == 1.0 and w[-1].end <= 5.0
+
+
+def test_enhanced_lrc_gaps():
+    lines = lrc.parse_lrc("[00:01.00]<00:01.00>夜<00:01.50>空<00:02.00>\n[00:03.00]<00:03.00>hi <00:03.50>there <00:04.00>\n")
+    assert lrc.join_words(lines[0].words) == "夜空" and lines[0].text == "夜空"
+    assert lines[1].text == "hi there"
+
+
+def test_wrap_rows():
+    widths = [50, 50, 50, 50]
+    assert lrc.wrap_rows(widths, [True] * 4, 10, 1000) == [[0, 1, 2, 3]]
+    assert lrc.wrap_rows(widths, [True] * 4, 10, 115) == [[0, 1], [2, 3]]
+    assert lrc.wrap_rows(widths, [False] * 4, 10, 100) == [[0, 1], [2, 3]]   # no spaces between CJK
+    assert lrc.wrap_rows([500, 20], [True, True], 10, 100) == [[0], [1]]     # over-wide piece gets own row
+    assert lrc.wrap_rows([], [], 10, 100) == []

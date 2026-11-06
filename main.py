@@ -127,6 +127,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--demo-song", default="1")
+    parser.add_argument("--demo-start", type=float, default=0.0)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--report")
     parser.add_argument("--screenshot")
@@ -168,7 +169,7 @@ def main() -> int:
             return 0
 
     from app.controller import Controller
-    ctl = Controller(app, demo=args.demo, demo_song=args.demo_song)
+    ctl = Controller(app, demo=args.demo, demo_song=args.demo_song, demo_start=args.demo_start)
     log.info("Started (demo=%s)", args.demo)
 
     if args.screenshot:
