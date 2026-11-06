@@ -68,6 +68,14 @@ def self_test(report_path: str | None) -> int:
         except Exception as e:
             add(False, f"Windows media integration failed: {e}")
         try:
+            from winrt.windows.storage.streams import DataWriter
+            from app.media_session import buffer_to_bytes
+            w = DataWriter()
+            w.write_bytes(b"art!")
+            add(buffer_to_bytes(w.detach_buffer()) == b"art!", "Album art reader works")
+        except Exception as e:
+            add(False, f"Album art reader failed: {e}")
+        try:
             from app import win32
             add(win32.IS_WINDOWS, "Windows click-through / always-on-top helpers loaded")
         except Exception as e:
@@ -81,6 +89,16 @@ def self_test(report_path: str | None) -> int:
         add(isinstance(items, list), "Lyrics service (LRCLIB) reachable")
     except Exception as e:
         add(False, f"Lyrics service not reachable (internet?): {e}")
+
+    try:
+        from app.translate import mymemory_probe, romaji_available, to_romaji
+        add(romaji_available() and to_romaji("日本").lower().startswith("nihon"),
+            "Japanese romaji available")
+        ok_tr = mymemory_probe()
+        lines.append(("✔ " if ok_tr else "• ") + ("Translation service (MyMemory) reachable" if ok_tr
+                     else "Translation service not reachable right now (only matters if you use translation)"))
+    except Exception as e:
+        add(False, f"Translation check failed: {e}")
 
     lines.append("")
     lines.append("RESULT: " + ("all checks passed" if ok else "some checks failed"))
@@ -106,6 +124,7 @@ def self_test(report_path: str | None) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--demo", action="store_true")
+    parser.add_argument("--demo-song", default="1")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--report")
     parser.add_argument("--screenshot")
@@ -147,7 +166,7 @@ def main() -> int:
             return 0
 
     from app.controller import Controller
-    ctl = Controller(app, demo=args.demo)
+    ctl = Controller(app, demo=args.demo, demo_song=args.demo_song)
     log.info("Started (demo=%s)", args.demo)
 
     if args.screenshot:

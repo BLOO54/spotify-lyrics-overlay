@@ -25,6 +25,8 @@ from .lyrics_provider import LrclibClient, LyricsNetworkError
 from .media_session import MediaState, MediaWatcher
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
+from .translate import (TranslationKeyError, TranslationQuotaError,
+                        TranslationService)
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ class _Bridge(QObject):
     """Signals let background threads hand data safely to the UI thread."""
     media = Signal(object)
     lyrics = Signal(int, object)
+    extras = Signal(int, object)
 
 
 class HotkeyFilter(QAbstractNativeEventFilter):
@@ -73,22 +76,28 @@ class HotkeyFilter(QAbstractNativeEventFilter):
 
 
 class Controller(QObject):
-    def __init__(self, app: QApplication, demo: bool = False):
+    def __init__(self, app: QApplication, demo: bool = False, demo_song: str = "1"):
         super().__init__()
         self.app = app
         self.s = Settings.load()
         self.clock = PlaybackClock()
         self.client = LrclibClient(app_data_dir() / "lyrics_cache")
+        self.translator = TranslationService(app_data_dir() / "translation_cache")
+        self._extras = None
+        self._extras_key = None
+        self._warned = set()
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lyrics")
         self.bridge = _Bridge()
         self.bridge.media.connect(self._on_media)
         self.bridge.lyrics.connect(self._on_lyrics)
+        self.bridge.extras.connect(self._on_extras)
 
         self.track_key = None
         self.track: MediaState | None = None
         self.fetch_token = 0
         self.settings_dlg: SettingsDialog | None = None
         self.demo = demo
+        self.demo_song = demo_song
         self._media_available = False
 
         self.icon = QIcon(str(resource_path("assets/icon.png")))
@@ -115,7 +124,8 @@ class Controller(QObject):
 
         if demo:
             from .demo import DemoPlayer
-            self.demo_player = DemoPlayer(self.bridge.media.emit)
+            self.demo_player = DemoPlayer(self.bridge.media.emit, demo_song,
+                                          resource_path("assets/icon.png"))
             self.demo_player.start()
         else:
             self.watcher = MediaWatcher(self.bridge.media.emit, self.s.spotify_only)
@@ -295,6 +305,8 @@ class Controller(QObject):
                 self.track = None
                 self._last_result = None
                 self.overlay.set_track("", "")
+                self.overlay.set_album_art(None)
+                self.overlay.duration = 0.0
                 self.overlay.playing = False
                 self.overlay.set_lyrics(None)
             self._media_available = False
@@ -304,6 +316,7 @@ class Controller(QObject):
 
         self.clock.update(PlaybackReport(st.position, st.playing, st.last_updated, st.duration))
         self.overlay.playing = st.playing
+        self.overlay.duration = st.duration
         if st.track_key != self.track_key:
             self.track_key = st.track_key
             self.track = st
@@ -311,6 +324,7 @@ class Controller(QObject):
             self.clock.reset(self.clock.estimate_reported_now(
                 PlaybackReport(st.position, st.playing, st.last_updated, st.duration)), st.playing)
             self.overlay.set_track(st.title, st.artist)
+            self._extras, self._extras_key = None, None
             if not st.title:
                 self.overlay.set_lyrics(None, "")
             elif not st.artist:
@@ -323,6 +337,7 @@ class Controller(QObject):
                 QTimer.singleShot(350, lambda: token == self.fetch_token and self._fetch(self.track))
         else:
             self.track = st
+        self.overlay.set_album_art(st.thumbnail)
         self._apply_visibility()
 
     def _fetch(self, st: MediaState):
@@ -333,9 +348,9 @@ class Controller(QObject):
         def work():
             try:
                 if self.demo:
-                    from .demo import DEMO_LRC
+                    from .demo import demo_lyrics
                     from .lyrics_provider import LyricsResult
-                    return LyricsResult(DEMO_LRC, None, False, "demo")
+                    return LyricsResult(demo_lyrics(self.demo_song), None, False, "demo")
                 return self.client.fetch(title, artist, album, dur)
             except Exception as e:  # handed back to UI thread
                 return e
@@ -366,6 +381,7 @@ class Controller(QObject):
             ly = build_lyrics(result.synced, result.plain, False, self.s.estimate_word_timing, result.source)
             if ly.synced:
                 self.overlay.set_lyrics(ly)
+                self._request_extras(ly)
             else:
                 self.overlay.set_lyrics(None, "Lyrics found, but couldn't read their timing")
         elif result.plain:
@@ -373,8 +389,67 @@ class Controller(QObject):
         else:
             self.overlay.set_lyrics(None, "No lyrics found for this song")
 
+    # ------------------------------------------------------------ translation / romaji
+    def _extras_settings(self):
+        s = self.s
+        return (s.translate_enabled, s.translate_target, s.translate_provider,
+                s.translate_email, s.deepl_key, s.show_romaji)
+
+    def _request_extras(self, ly):
+        s = self.s
+        if not (s.translate_enabled or s.show_romaji):
+            return
+        key = (self.fetch_token, self._extras_settings())
+        if key == self._extras_key and self._extras is not None:
+            self.overlay.set_extras(self._extras)      # same song, same settings: reuse
+            return
+        self._extras_key = key
+        token = self.fetch_token
+        lines = [ln.text for ln in ly.lines]
+        opts = dict(translate=s.translate_enabled, romaji=s.show_romaji, target=s.translate_target,
+                    provider=s.translate_provider, email=s.translate_email, deepl_key=s.deepl_key)
+
+        def work():
+            try:
+                if self.demo:
+                    from .demo import demo_extras
+                    return demo_extras(self.demo_song, lines, opts)
+                return self.translator.build(lines, **opts)
+            except Exception as e:
+                return e
+
+        fut = self.pool.submit(work)
+        fut.add_done_callback(lambda f: self.bridge.extras.emit(token, f.result()))
+
+    def _warn_once(self, key, text):
+        if key in self._warned:
+            return
+        self._warned.add(key)
+        self.tray.showMessage(APP_NAME, text, QSystemTrayIcon.MessageIcon.Warning, 6000)
+
+    def _on_extras(self, token: int, result):
+        if token != self.fetch_token:
+            return
+        if isinstance(result, TranslationQuotaError):
+            self._warn_once("quota", f"{result}. Translations will work again later – or add an "
+                            "email / DeepL key in Settings → Lyrics & translation.")
+            self._extras_key = None
+            return
+        if isinstance(result, TranslationKeyError):
+            self._warn_once("key", str(result))
+            self._extras_key = None
+            return
+        if isinstance(result, Exception):
+            log.warning("Translation failed: %r", result)
+            self._warn_once("neterr", "Couldn't reach the translation service – lyrics still work.")
+            self._extras_key = None
+            return
+        self._extras = result
+        self.overlay.set_extras(result)
+
     # ------------------------------------------------------------ per-frame
     def _tick(self):
         if self.overlay.isVisible():
+            self.overlay.play_pos = self.clock.position()
             self.overlay.position = self.clock.position() + self.s.sync_offset_ms / 1000.0
             self.overlay.update()

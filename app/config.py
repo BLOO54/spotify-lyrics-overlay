@@ -43,10 +43,14 @@ class Settings:
     highlight_color: str = "#A855F7"     # purple
     highlight_color2: str = "#3B82F6"    # blue (gradient end)
     glow: bool = True
+    theme: str = "Neon"
+    highlight_style: str = "wipe"        # see themes.HIGHLIGHT_STYLES
+    keep_sung_colored: bool = True       # sung words stay tinted (False = back to white)
     # Window look
     background_color: str = "#0A0A12"
     background_opacity: float = 0.55     # 0 = fully clear, 1 = solid
     window_opacity: float = 1.0          # fades the whole overlay incl. text
+    show_background: bool = True         # False = lyrics only, no box behind them
     width: int = 1000
     # Placement
     position: str = "bottom-center"
@@ -56,6 +60,9 @@ class Settings:
     custom_y: int = 100
     # Behaviour
     show_title: bool = True
+    show_album_art: bool = False
+    time_display: str = "off"            # "off" | "left" (-1:23) | "elapsed" (1:02 / 3:45)
+    show_progress: bool = False          # thin song progress bar
     lines_shown: int = 3                 # 1 = current only, 2 = current + next, 3 = previous + current + next
     click_through: bool = False
     visible: bool = True
@@ -63,6 +70,13 @@ class Settings:
     estimate_word_timing: bool = True    # karaoke-guess when real word timing isn't available
     sync_offset_ms: int = 0              # + makes lyrics appear earlier
     spotify_only: bool = True
+    # Translation (off by default; only used for songs not in your language)
+    translate_enabled: bool = False
+    translate_target: str = "en"
+    translate_provider: str = "mymemory"  # "mymemory" (free, no account) | "deepl" (free key)
+    translate_email: str = ""            # optional: raises MyMemory's free daily limit
+    deepl_key: str = ""                  # your own DeepL API key (stored only on this PC)
+    show_romaji: bool = False            # Japanese pronunciation in English letters
     first_run: bool = True
 
     # ------------------------------------------------------------------
@@ -107,6 +121,16 @@ class Settings:
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
+        if self.time_display not in ("off", "left", "elapsed"):
+            self.time_display = "off"
+        if self.translate_provider not in ("mymemory", "deepl"):
+            self.translate_provider = "mymemory"
+        from .themes import HIGHLIGHT_STYLES
+        from .translate import LANGUAGES
+        if self.highlight_style not in HIGHLIGHT_STYLES:
+            self.highlight_style = "wipe"
+        if self.translate_target not in LANGUAGES:
+            self.translate_target = "en"
 
     def save(self) -> None:
         try:

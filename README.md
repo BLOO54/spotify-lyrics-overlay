@@ -7,7 +7,11 @@ of whatever you're playing in Spotify, karaoke-style, on top of your games.
 - Word-by-word highlighting with a smooth purple→blue wipe
 - Works over **borderless / windowed fullscreen** games
 - **Click-through** mode so it never gets in the way of your mouse
-- Custom font, size, colours, opacity and position
+- Custom font, size, colours, opacity and position, plus **8 theme presets**
+- **6 highlight styles**: wipe, pop, glow, grow, bounce or underline
+- Optional **album art**, **song timer** (time left or elapsed/total) and progress bar
+- **Lyrics-only mode** with no background box
+- **Translation** of foreign-language songs, and **romaji** for Japanese songs
 - Lives in the system tray, with keyboard shortcuts that work in-game
 
 **No Spotify login, no password, no API keys.** The app only *reads* the "now playing" info that
@@ -18,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.0.1.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.1.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -27,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.0.1.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.1.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -95,8 +99,34 @@ The header shows which sync mode is in use:
 Lyrics come from **[LRCLIB](https://lrclib.net)**, a free, community-made lyrics database.
 Most songs only have line timing there. If a song isn't in LRCLIB, the overlay says "No lyrics found".
 
+### 🎨 Settings at a glance
+Open Settings (**Ctrl+Alt+O**, or right-click the tray icon). There are four tabs:
+
+| Tab | What's there |
+|---|---|
+| **Look** | Theme presets (Neon, Ocean, Sunset, Sakura, Arcade, Gold, Minimal, Light), font, colours, **highlight style**, glow, "keep sung words coloured", **background box on/off**, opacity |
+| **Layout** | Lines shown (1/2/3), song title, **album art**, **song timer**, progress bar, screen position, monitor, size |
+| **Lyrics & translation** | Sync adjustment, word-timing estimate, **translation**, **romaji** |
+| **Behaviour** | Click-through, hide while paused, Spotify only |
+
+Pick a theme first, then tweak anything you like (the theme then shows as "Custom").
+
+### 🌍 Translation and romaji
+Turn on **"Translate songs that aren't in my language"** in *Lyrics & translation* and pick your language.
+The app detects the song's language and only translates songs that aren't already in yours.
+The translation appears in italics under the current line.
+
+* **MyMemory** (default): free, no account. About 5,000 characters a day (≈5–10 songs).
+  Type **any email address** in the box to raise that to 50,000 a day.
+* **DeepL**: better quality, 500,000 characters a month free. Make a free account at
+  <https://www.deepl.com/pro-api>, copy your **API key**, and paste it into Settings.
+  The key is saved only on your PC.
+* Each song is translated **once** and remembered, so replaying it costs nothing.
+* **Romaji** (Japanese pronunciation in English letters) is worked out on your PC, with no internet and no limits.
+
 ### Try it without Spotify
 Start menu → **Spotify Lyrics Overlay (Demo mode)** plays a fake song so you can tweak the look.
+For a Japanese demo song (to try translation/romaji), run `SpotifyLyricsOverlay.exe --demo --demo-song jp`.
 
 ---
 
@@ -111,6 +141,8 @@ Start menu → **Spotify Lyrics Overlay (Demo mode)** plays a fake song so you c
 | Can't find the app | Look in the system tray (^ arrow bottom-right). |
 | Shortcut keys don't work | Another program already uses them. Use the tray menu instead. |
 | "Can't reach the lyrics service" | Check your internet. The app retries automatically every 15 seconds. |
+| Translation stopped appearing | You've probably used today's free MyMemory allowance. Add an email or a DeepL key in Settings. |
+| Japanese shows as boxes | Install the Japanese language pack: Windows Settings → Time & language → Language → Add Japanese. |
 | Anything else | Start menu → **Spotify Lyrics Overlay (Self test)** checks every part and tells you what's wrong. The log is at `%APPDATA%\SpotifyLyricsOverlay\app.log`. |
 
 **Uninstall:** Windows Settings → Apps → Spotify Lyrics Overlay → Uninstall.
@@ -120,8 +152,8 @@ Your settings stay in `%APPDATA%\SpotifyLyricsOverlay`; delete that folder to re
 
 ## 🔒 Privacy and fair use
 - No account, login, password or token is used or stored.
-- The only internet requests go to `lrclib.net`, sending the song title, artist, album and length,
-  identified with an app User-Agent as LRCLIB asks.
+- Internet requests go to `lrclib.net` (song title, artist, album and length, identified with an app User-Agent as LRCLIB asks)
+  and, **only if you turn translation on**, the lyric lines go to MyMemory or DeepL to be translated.
 - Lyrics are cached on your PC so each song is only downloaded once.
 - Nothing is injected into games or Spotify; the overlay is a normal (transparent) window.
 
@@ -139,7 +171,9 @@ app/
   overlay.py          the transparent window and karaoke rendering
   settings_dialog.py  settings window
   controller.py       wires it together, tray icon
-  demo.py             demo song for --demo
+  demo.py             demo songs for --demo
+  themes.py           theme presets and highlight styles
+  translate.py        language detection, MyMemory / DeepL translation, romaji (pykakasi)
 main.py               entry point (--demo, --self-test)
 SpotifyLyricsOverlay.spec   PyInstaller recipe
 installer/installer.iss     Inno Setup installer (per-user, no admin)

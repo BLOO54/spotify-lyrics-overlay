@@ -37,6 +37,7 @@ class MediaState:
     playing: bool = False
     source_app: str = ""
     error: str = ""
+    thumbnail: bytes | None = None      # album art image (JPEG/PNG bytes)
 
     @property
     def track_key(self) -> tuple:
@@ -71,6 +72,38 @@ def _datetime(v) -> datetime | None:
     return dt
 
 
+def buffer_to_bytes(buf) -> bytes:
+    """Copy a WinRT IBuffer into Python bytes (works across winrt versions)."""
+    try:
+        return bytes(memoryview(buf))
+    except Exception:
+        pass
+    from winrt.windows.storage.streams import DataReader
+    reader = DataReader.from_buffer(buf)
+    n = int(buf.length)
+    try:
+        data = bytearray(n)
+        reader.read_bytes(data)
+        return bytes(data)
+    except Exception:
+        return bytes(reader.read_bytes(n))
+
+
+async def read_thumbnail(ref) -> bytes | None:
+    """Read the album-art stream Windows gives us."""
+    if ref is None:
+        return None
+    from winrt.windows.storage.streams import Buffer, InputStreamOptions
+    stream = await ref.open_read_async()
+    size = int(stream.size)
+    if size <= 0 or size > 20_000_000:
+        return None
+    buf = Buffer(size)
+    await stream.read_async(buf, size, InputStreamOptions.READ_AHEAD)
+    data = buffer_to_bytes(buf)
+    return data or None
+
+
 def _is_spotify(app_id: str) -> bool:
     return "spotify" in (app_id or "").lower()
 
@@ -83,6 +116,9 @@ class MediaWatcher:
         self.spotify_only = spotify_only
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="MediaWatcher", daemon=True)
+        self._thumb_key = None
+        self._thumb: bytes | None = None
+        self._thumb_tries = 0
 
     def start(self):
         self._thread.start()
@@ -145,6 +181,17 @@ class MediaWatcher:
         except Exception:
             playing = str(status).upper().endswith("PLAYING")
 
+        # Album art: only read it once per song (Spotify sometimes adds it a moment later)
+        key = (props.title, props.artist, props.album_title) if props else None
+        if key != self._thumb_key:
+            self._thumb_key, self._thumb, self._thumb_tries = key, None, 0
+        if self._thumb is None and self._thumb_tries < 8 and props is not None:
+            self._thumb_tries += 1
+            try:
+                self._thumb = await read_thumbnail(props.thumbnail)
+            except Exception as e:
+                log.debug("album art read failed: %s", e)
+
         start = _seconds(tl.start_time) if tl else 0.0
         end = _seconds(tl.end_time) if tl else 0.0
         pos = _seconds(tl.position) if tl else 0.0
@@ -158,4 +205,5 @@ class MediaWatcher:
             last_updated=_datetime(tl.last_updated_time) if tl else None,
             playing=playing,
             source_app=session.source_app_user_model_id or "",
+            thumbnail=self._thumb,
         )

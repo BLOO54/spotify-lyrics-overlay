@@ -3,7 +3,7 @@
 # "onedir" (a folder) is used instead of a single .exe because it starts faster
 # and is far less likely to be falsely flagged by antivirus software.
 
-from PyInstaller.utils.hooks import collect_submodules, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
 
 hidden = [
     "winrt.runtime",
@@ -11,8 +11,15 @@ hidden = [
     "winrt.windows.foundation",
     "winrt.windows.foundation.collections",
     "winrt.windows.media.control",
+    "winrt.windows.storage.streams",
 ]
 binaries = []
+datas = [("assets/icon.png", "assets"), ("assets/icon.ico", "assets")]
+try:
+    datas += collect_data_files("pykakasi")      # romaji dictionaries
+    hidden += collect_submodules("pykakasi")
+except Exception as e:
+    print("pykakasi collection skipped:", e)
 try:
     hidden += collect_submodules("winrt")
     binaries += collect_dynamic_libs("winrt")
@@ -23,7 +30,7 @@ a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=binaries,
-    datas=[("assets/icon.png", "assets"), ("assets/icon.ico", "assets")],
+    datas=datas,
     hiddenimports=hidden,
     excludes=["tkinter", "unittest", "pytest",
               "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml",
