@@ -92,7 +92,7 @@ def self_test(report_path: str | None) -> int:
 
     try:
         from app.translate import mymemory_probe, romaji_available, to_romaji
-        add(romaji_available() and to_romaji("日本").lower().startswith("nihon"),
+        add(romaji_available() and to_romaji("ありがとう").lower().startswith("arigat"),
             "Japanese romaji available")
         ok_tr = mymemory_probe()
         lines.append(("✔ " if ok_tr else "• ") + ("Translation service (MyMemory) reachable" if ok_tr

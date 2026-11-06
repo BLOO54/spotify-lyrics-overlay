@@ -136,4 +136,5 @@ def test_romaji_only_without_internet(tmp_path):
 
 @pytest.mark.skipif(not T.romaji_available(), reason="pykakasi not installed here")
 def test_romaji_real():
-    assert T.to_romaji("日本") .lower().startswith("nihon")
+    assert T.to_romaji("日本").lower() in ("nihon", "nippon")     # both readings are correct
+    assert T.to_romaji("ありがとう").lower().startswith("arigat")
