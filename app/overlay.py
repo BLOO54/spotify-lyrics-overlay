@@ -214,6 +214,12 @@ class OverlayWindow(QWidget):
             pos = "left" if self.s.width >= 700 else "header"
         return pos
 
+    HEADER_ART_SCALE = {"small": 0.87, "medium": 1.45, "large": 2.0}   # x font size
+
+    def _header_art_side(self) -> float:
+        side = self.s.font_size * self.HEADER_ART_SCALE.get(self.s.header_art_size, 1.45)
+        return max(16.0, min(side, self.s.width * 0.2))
+
     def _left_art_side(self) -> int:
         return int(min(self.s.width * 0.22, self.s.font_size * 4.2))
 
@@ -316,7 +322,10 @@ class OverlayWindow(QWidget):
 
         self._rows = []
         if self._header_needed():
-            self._rows.append(("header", QFontMetricsF(head).height() * 1.6))
+            head_h = QFontMetricsF(head).height() * 1.6
+            if self._art_mode() == "header" and self._art_bytes:
+                head_h = max(head_h, self._header_art_side() + 8)    # room for the cover
+            self._rows.append(("header", head_h))
         if self.s.lines_shown >= 3:
             self._rows.append(("prev", block(ctx, ctx_rows)))
         self._rows.append(("main", block(main, main_rows)))
@@ -689,10 +698,10 @@ class OverlayWindow(QWidget):
         right -= self._pad * 0.4
         if self._art_mode() == "header" and self._art_bytes:
             # small album art in front of the title
-            side = min(row_h * 0.95, fm.height() * 1.45)
-            self._paint_art(p, x, y + (row_h - side) / 2 - fm.height() * 0.1, side, radius=4)
-            x += side + 8
-        base = y + fm.ascent()
+            side = min(row_h - 4, self._header_art_side())
+            self._paint_art(p, x, y + (row_h - side) / 2, side, radius=max(4.0, side * 0.12))
+            x += side + 10
+        base = y + (row_h - fm.height()) / 2 + fm.ascent()     # title centred beside the cover
         p.setFont(f)
         t = self.time_text()
         right_edge = right

@@ -311,6 +311,12 @@ class SettingsDialog(QDialog):
         ab.setCurrentIndex([k for k, _ in ART_CHOICES].index(self.s.album_art_position))
         ab.currentIndexChanged.connect(lambda i: self._set("album_art_position", ab.itemData(i)))
         f.addRow("Album art position", ab)
+        self._w["header_art_size"] = hs2 = QComboBox()
+        for key, label in (("small", "Small"), ("medium", "Medium"), ("large", "Large")):
+            hs2.addItem(label, key)
+        hs2.setCurrentIndex(["small", "medium", "large"].index(self.s.header_art_size))
+        hs2.currentIndexChanged.connect(lambda i: self._set("header_art_size", hs2.itemData(i)))
+        f.addRow("Size next to the title", hs2)
         self._w["time_display"] = tb = QComboBox()
         for key, label in TIME_CHOICES:
             tb.addItem(label, key)

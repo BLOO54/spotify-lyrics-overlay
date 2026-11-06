@@ -97,11 +97,9 @@ jobs:
           "Windows: $([System.Environment]::OSVersion.VersionString) | Transparency effects before: $before" | Tee-Object -FilePath ci-glass-info.txt
           # the test runs below: frosted with transparency OFF (should fall back) and ON (should blur)
           $shots = [ordered]@{
-            "solid-backdrop"   = @{ song = "1";  at = 6; grab = $true; s = @{ theme = "Neon"; background_style = "solid"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
-            "frosted-transparency-off" = @{ song = "1"; at = 6; grab = $true; transp = 0; s = @{ theme = "Neon"; background_style = "frosted"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
-            "frosted-backdrop" = @{ song = "1";  at = 6; grab = $true; transp = 1; s = @{ theme = "Neon"; background_style = "frosted"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
-            "album-match"      = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; match_album_highlight = $true; match_album_background = $true; show_album_art = $true; translate_enabled = $true; time_display = "left" } }
-            "square-corners"   = @{ song = "1";  at = 6; grab = $false; s = @{ theme = "Neon"; corner_radius = 0; lines_shown = 2 } }
+            "art-small"  = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 500; long_lines = "shrink"; show_album_art = $true; album_art_position = "auto"; header_art_size = "small"; time_display = "left"; match_album_highlight = $true } }
+            "art-medium" = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 500; long_lines = "shrink"; show_album_art = $true; album_art_position = "auto"; header_art_size = "medium"; time_display = "left"; match_album_highlight = $true } }
+            "art-large"  = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 500; long_lines = "shrink"; show_album_art = $true; album_art_position = "auto"; header_art_size = "large"; time_display = "left"; match_album_highlight = $true } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s

@@ -67,6 +67,7 @@ class Settings:
     show_title: bool = True
     show_album_art: bool = False
     album_art_position: str = "auto"     # "auto" | "left" (big) | "header" (small, next to the title)
+    header_art_size: str = "medium"      # size of the small cover next to the title: "small" | "medium" | "large"
     time_display: str = "off"            # "off" | "left" (-1:23) | "elapsed" (1:02 / 3:45)
     show_progress: bool = False          # thin song progress bar
     long_lines: str = "widen"            # "widen" (grow up to the screen edge) | "shrink" (smaller text) | "wrap" (more rows)
@@ -149,6 +150,8 @@ class Settings:
         for field, _, default in ACTIONS:
             val = getattr(self, field)
             setattr(self, field, normalise(val) if val and is_valid(val) else ("" if not val else default))
+        if self.header_art_size not in ("small", "medium", "large"):
+            self.header_art_size = "medium"
         if self.album_art_position not in ("auto", "left", "header"):
             self.album_art_position = "auto"
         if self.time_display not in ("off", "left", "elapsed"):
