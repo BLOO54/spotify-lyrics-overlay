@@ -64,6 +64,7 @@ class Settings:
     album_art_position: str = "auto"     # "auto" | "left" (big) | "header" (small, next to the title)
     time_display: str = "off"            # "off" | "left" (-1:23) | "elapsed" (1:02 / 3:45)
     show_progress: bool = False          # thin song progress bar
+    long_lines: str = "widen"            # "widen" (grow up to the screen edge) | "shrink" (smaller text) | "wrap" (more rows)
     lines_shown: int = 3                 # 1 = current only, 2 = current + next, 3 = previous + current + next
     click_through: bool = False
     visible: bool = True
@@ -122,6 +123,8 @@ class Settings:
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
+        if self.long_lines not in ("widen", "shrink", "wrap"):
+            self.long_lines = "widen"
         if self.album_art_position not in ("auto", "left", "header"):
             self.album_art_position = "auto"
         if self.time_display not in ("off", "left", "elapsed"):

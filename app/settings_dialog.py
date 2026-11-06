@@ -35,6 +35,9 @@ LINE_CHOICES = [
     "2 lines – current + next",
     "3 lines – previous, current, next",
 ]
+LONG_CHOICES = [("widen", "Make the overlay wider (up to the screen edge)"),
+                ("shrink", "Shrink the text to fit on one row"),
+                ("wrap", "Wrap onto more rows")]
 ART_CHOICES = [("auto", "Auto – small when the overlay is narrow"), ("left", "Left side (big)"),
                ("header", "Next to the song title (small)")]
 TIME_CHOICES = [("off", "Off"), ("left", "Time left  (-2:13)"), ("elapsed", "Elapsed / total  (1:32 / 3:45)")]
@@ -179,6 +182,12 @@ class SettingsDialog(QDialog):
         lb.setCurrentIndex(self.s.lines_shown - 1)
         lb.currentIndexChanged.connect(lambda i: self._set("lines_shown", i + 1))
         f.addRow("Lines shown", lb)
+        self._w["long_lines"] = ll = QComboBox()
+        for key, label in LONG_CHOICES:
+            ll.addItem(label, key)
+        ll.setCurrentIndex([k for k, _ in LONG_CHOICES].index(self.s.long_lines))
+        ll.currentIndexChanged.connect(lambda i: self._set("long_lines", ll.itemData(i)))
+        f.addRow("Long lines", ll)
         self._w["show_title"] = self._check("Show song title and artist", "show_title")
         f.addRow(self._w["show_title"])
         self._w["show_album_art"] = self._check("Show album art", "show_album_art")
@@ -211,6 +220,8 @@ class SettingsDialog(QDialog):
         sb.currentIndexChanged.connect(lambda i: self._set("screen_index", i))
         f.addRow("Monitor", sb)
         self._w["width"] = self._spin(300, 4000, "width", " px", step=20)
+        self._w["width"].setToolTip("With 'Make the overlay wider', this is the normal width; "
+                                    "it stretches for long lines but never past the screen.")
         f.addRow("Width", self._w["width"])
         self._w["margin"] = self._spin(0, 1000, "margin", " px", step=5)
         f.addRow("Distance from edge", self._w["margin"])

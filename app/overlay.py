@@ -147,7 +147,8 @@ class OverlayWindow(QWidget):
 
     def lyric_area(self):
         """Horizontal space the lyrics may use (left, right)."""
-        left, right = float(self._pad), float(self.s.width - self._pad)
+        width = getattr(self, "_eff_width", self.s.width)
+        left, right = float(self._pad), float(width - self._pad)
         if self._art_mode() == "left" and self._art_bytes:
             left += self._left_art_side() + self._pad * 0.8
         return left, right
@@ -157,10 +158,17 @@ class OverlayWindow(QWidget):
         gaps = [g for _, g in tokens]
         return widths, gaps
 
+    def _one_row(self) -> bool:
+        """True when the user wants long lines kept on one row (wider overlay / smaller text)."""
+        return self.s.long_lines in ("widen", "shrink")
+
+    def _floor_ratio(self) -> float:
+        return 0.5 if self._one_row() else 0.55
+
     def _fit_tokens(self, f: QFont, tokens, avail: float, max_rows: int):
         """Pick a font size so the text fits in max_rows rows; returns (font, rows, widths, gaps)."""
         size = f.pixelSize()
-        floor = max(8, int(size * 0.55))
+        floor = max(8, int(size * self._floor_ratio()))
         while True:
             fm = QFontMetricsF(f)
             widths, gaps = self._pieces(fm, tokens)
@@ -188,13 +196,44 @@ class OverlayWindow(QWidget):
     def apply_settings(self):
         main, ctx, head, extra = self.fonts()
         self._pad = max(10, int(self.s.font_size * 0.45))
+        ly = self.lyrics
+        lyric_texts = [ln.text for ln in ly.lines] if (ly and ly.synced) else [self.status]
+
+        # "Make the overlay wider": stretch to fit this song's longest line, but never past the screen
+        self._eff_width = self.s.width
+        if self.s.long_lines == "widen":
+            left, right = self.lyric_area()
+            overhead = self.s.width - (right - left - self._pad * 0.5)
+            fm = QFontMetricsF(main)
+            widest = max((fm.horizontalAdvance(t) for t in lyric_texts if t), default=0.0)
+            extras_texts = []
+            if self._show_translation():
+                extras_texts += list(self.extras.translations.values())
+            if self._show_romaji():
+                extras_texts += list(self.extras.romaji.values())
+            if extras_texts:
+                fx = QFontMetricsF(extra)
+                widest = max(widest, max(fx.horizontalAdvance(t) for t in extras_texts))
+            scr = self.target_screen()
+            max_w = (scr.geometry().width() - 16) if scr is not None else self.s.width
+            self._eff_width = int(max(self.s.width, min(widest + overhead + 2, max_w)))
+
         left, right = self.lyric_area()
         avail = right - left - self._pad * 0.5
 
-        ly = self.lyrics
-        lyric_texts = [ln.text for ln in ly.lines] if (ly and ly.synced) else [self.status]
-        main_rows = self._rows_needed(main, lyric_texts, avail, MAX_MAIN_ROWS)
-        ctx_rows = self._rows_needed(ctx, lyric_texts, avail, MAX_SIDE_ROWS) if (ly and ly.synced) else 1
+        if self._one_row():
+            # rows are only needed if a line won't fit even with the smallest allowed text
+            def floor_font(f):
+                g = QFont(f)
+                g.setPixelSize(max(8, int(f.pixelSize() * self._floor_ratio())))
+                return g
+            main_rows = self._rows_needed(floor_font(main), lyric_texts, avail, MAX_MAIN_ROWS)
+            ctx_rows = self._rows_needed(floor_font(ctx), lyric_texts, avail, MAX_SIDE_ROWS) if (ly and ly.synced) else 1
+            extra_measure = floor_font(extra)
+        else:
+            main_rows = self._rows_needed(main, lyric_texts, avail, MAX_MAIN_ROWS)
+            ctx_rows = self._rows_needed(ctx, lyric_texts, avail, MAX_SIDE_ROWS) if (ly and ly.synced) else 1
+            extra_measure = extra
 
         def block(f, rows, first=1.25, more=1.05):
             return QFontMetricsF(f).height() * (first + more * (rows - 1))
@@ -206,21 +245,21 @@ class OverlayWindow(QWidget):
             self._rows.append(("prev", block(ctx, ctx_rows)))
         self._rows.append(("main", block(main, main_rows)))
         if self._show_romaji():
-            n = self._rows_needed(extra, self.extras.romaji.values(), avail, MAX_SIDE_ROWS)
+            n = self._rows_needed(extra_measure, self.extras.romaji.values(), avail, MAX_SIDE_ROWS)
             self._rows.append(("romaji", block(extra, n, 1.2, 1.0)))
         if self._show_translation():
-            n = self._rows_needed(extra, self.extras.translations.values(), avail, MAX_SIDE_ROWS)
+            n = self._rows_needed(extra_measure, self.extras.translations.values(), avail, MAX_SIDE_ROWS)
             self._rows.append(("trans", block(extra, n, 1.2, 1.0)))
         if self.s.lines_shown >= 2:
             self._rows.append(("next", block(ctx, ctx_rows)))
-        self._row_caps = {"main": MAX_MAIN_ROWS, "prev": ctx_rows, "next": ctx_rows,
+        self._row_caps = {"main": main_rows, "prev": ctx_rows, "next": ctx_rows,
                           "romaji": MAX_SIDE_ROWS, "trans": MAX_SIDE_ROWS}
         self._ctx_h = QFontMetricsF(ctx).height() * 1.25
         self._progress_h = 8 if self.s.show_progress else 0
         h = self._pad * 2 + sum(r[1] for r in self._rows) + self._progress_h
         if self._art_mode() == "left" and self._art_bytes:
             h = max(h, self._left_art_side() + self._pad * 2 + self._progress_h)
-        self.setFixedSize(self.s.width, int(h))
+        self.setFixedSize(int(self._eff_width), int(h))
         self.setWindowOpacity(self.s.window_opacity)
         self._art_pix = None          # re-scale album art for the new size
         self.reposition()             # keeps the overlay anchored (and on-screen) when its size changes
@@ -401,7 +440,7 @@ class OverlayWindow(QWidget):
         tokens = split_tokens(text)
         if not tokens:
             return
-        f, rows, widths, gaps = self._fit_tokens(f, tokens, avail, max_rows)
+        f, rows, widths, gaps = self._fit_tokens(f, tokens, avail, 1 if self._one_row() else max_rows)
         fm = QFontMetricsF(f)
         if len(rows) > max_rows:              # still too long: cut the last row with "…"
             rows = rows[:max_rows - 1] + [[i for row in rows[max_rows - 1:] for i in row]]
@@ -623,7 +662,7 @@ class OverlayWindow(QWidget):
             tokens = split_tokens(line.text)
         if not tokens:
             return
-        f, rows, widths, gaps = self._fit_tokens(f, tokens, avail, MAX_MAIN_ROWS)
+        f, rows, widths, gaps = self._fit_tokens(f, tokens, avail, 1 if self._one_row() else MAX_MAIN_ROWS)
         fm = QFontMetricsF(f)
         space = fm.horizontalAdvance(" ")
         line_h = fm.height() * 1.05
