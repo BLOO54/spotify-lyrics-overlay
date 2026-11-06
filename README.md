@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.7.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.8.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.7.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.8.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -102,7 +102,8 @@ The header shows which sync mode is in use:
   get a karaoke feel. Turn off *"Estimate word timing"* in Settings for plain line-by-line mode,
   where the whole line lights up with a progress bar underneath.
 
-Lyrics come from **[LRCLIB](https://lrclib.net)**, a free, community-made lyrics database.
+Lyrics come from **[LRCLIB](https://lrclib.net)**, a free, community-made lyrics database. The app prefers
+word-timed lyrics, then line-timed lyrics, and only falls back to untimed lyrics if nothing else exists.
 Most songs only have line timing there.
 
 **Word timing guess** (Settings → Lyrics & translation) decides how the words are spread when only line timing
@@ -114,7 +115,7 @@ Open Settings (**Ctrl+Alt+O**, or right-click the tray icon). There are four tab
 
 | Tab | What's there |
 |---|---|
-| **Look** | Theme presets (Neon, Ocean, Sunset, Sakura, Arcade, Gold, Minimal, Light), font, colours, **highlight style**, glow, "keep sung words coloured", **background box on/off**, opacity |
+| **Look** | Theme presets (Neon, Ocean, Sunset, Sakura, Arcade, Gold, Minimal, Light), font, colours, **highlight style**, glow, "keep sung words coloured", **background box on/off**, **solid or frosted-glass background**, **corner rounding**, opacity, **match colours to the album art**, smooth colour fades |
 | **Layout** | Lines shown (1/2/3), song title, **album art** and where it goes, **song timer**, progress bar, screen position, monitor, size |
 | **Lyrics & translation** | Sync adjustment, word-timing estimate, **translation**, **romaji** |
 | **Behaviour** | Click-through, hide while paused, Spotify only |
@@ -129,6 +130,14 @@ Pick a theme first, then tweak anything you like (the theme then shows as "Custo
 
 In every mode the overlay stays fully on screen. With **Album art position → Auto**,
 the cover sits small next to the song title when the overlay is narrow, and big on the left when it's wide.
+
+### ✨ Frosted glass and album colours
+* **Background style → Frosted glass** blurs whatever is behind the overlay (your game), like the Windows Start
+  menu. It needs *Transparency effects* turned on in Windows Settings → Personalization → Colors; if it's off,
+  the normal background is used instead.
+* **Match the album art** picks the highlight colours and/or a dark background tint from the current album
+  cover, and **fades smoothly** to the new colours when the song changes.
+* **Corner rounding** sets how round the corners are (0 = square).
 
 ### 🌍 Translation and romaji
 Turn on **"Translate songs that aren't in my language"** in *Lyrics & translation* and pick your language.

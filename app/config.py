@@ -51,6 +51,11 @@ class Settings:
     background_opacity: float = 0.55     # 0 = fully clear, 1 = solid
     window_opacity: float = 1.0          # fades the whole overlay incl. text
     show_background: bool = True         # False = lyrics only, no box behind them
+    background_style: str = "solid"      # "solid" | "frosted" (blurs whatever is behind the overlay)
+    corner_radius: int = 18              # 0 = square corners
+    match_album_highlight: bool = False  # take highlight colours from the album art
+    match_album_background: bool = False # take the background colour from the album art
+    smooth_colour_changes: bool = True   # fade colours gently when the song changes
     width: int = 1000
     # Placement
     position: str = "bottom-center"
@@ -133,6 +138,9 @@ class Settings:
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
+        if self.background_style not in ("solid", "frosted"):
+            self.background_style = "solid"
+        self.corner_radius = max(0, min(40, int(self.corner_radius)))
         if self.word_timing_mode not in ("syllables", "letters"):
             self.word_timing_mode = "syllables"
         if self.long_lines not in ("widen", "shrink", "wrap"):

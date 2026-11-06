@@ -151,3 +151,89 @@ def parse_msg(message_ptr: int):
         return None, None
     msg = wintypes.MSG.from_address(int(message_ptr))
     return msg.message, msg.wParam
+
+
+# --------------------------------------------------------------------------
+# Frosted glass (blur what's behind the overlay) and rounded corners.
+#
+# Windows 10 (1803+) and 11 can blur whatever is behind a window - it's the same
+# "acrylic" effect the Start menu uses. We switch it on with the long-standing
+# SetWindowCompositionAttribute call. The blur is clipped to a rounded shape so
+# it matches the overlay's corners. If Windows refuses (older version, or
+# "Transparency effects" turned off in Settings), the overlay simply keeps its
+# normal see-through background.
+
+ACCENT_DISABLED = 0
+ACCENT_ENABLE_BLURBEHIND = 3
+ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
+WCA_ACCENT_POLICY = 19
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_DONOTROUND = 1
+DWMWCP_ROUND = 2
+
+
+def acrylic_tint(hex_color: str, alpha: float) -> int:
+    """'#RRGGBB' + alpha -> the 0xAABBGGRR number Windows expects for the glass tint."""
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    a = max(0, min(255, int(round(alpha * 255))))
+    return (a << 24) | (b << 16) | (g << 8) | r
+
+
+if IS_WINDOWS:
+    class _ACCENTPOLICY(ctypes.Structure):
+        _fields_ = [("AccentState", ctypes.c_int), ("AccentFlags", ctypes.c_int),
+                    ("GradientColor", ctypes.c_uint), ("AnimationId", ctypes.c_int)]
+
+    class _WINCOMPATTRDATA(ctypes.Structure):
+        _fields_ = [("Attribute", ctypes.c_int), ("Data", ctypes.c_void_p), ("SizeOfData", ctypes.c_size_t)]
+
+    try:
+        _SetWCA = user32.SetWindowCompositionAttribute
+        _SetWCA.argtypes = [wintypes.HWND, ctypes.POINTER(_WINCOMPATTRDATA)]
+        _SetWCA.restype = wintypes.BOOL
+    except AttributeError:          # very old Windows
+        _SetWCA = None
+    gdi32 = ctypes.WinDLL("gdi32")
+    gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
+    gdi32.CreateRoundRectRgn.restype = wintypes.HANDLE
+    user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HANDLE, wintypes.BOOL]
+    user32.SetWindowRgn.restype = ctypes.c_int
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi")
+    except OSError:
+        dwmapi = None
+
+
+def set_frosted(hwnd: int, enabled: bool, tint_hex: str = "#000000", tint_alpha: float = 0.3) -> bool:
+    """Turn the blur-behind effect on/off. Returns True if Windows accepted it."""
+    if not IS_WINDOWS or not hwnd or _SetWCA is None:
+        return False
+    try:
+        for state in ((ACCENT_ENABLE_ACRYLICBLURBEHIND, ACCENT_ENABLE_BLURBEHIND) if enabled else (ACCENT_DISABLED,)):
+            accent = _ACCENTPOLICY(state, 2 if enabled else 0, acrylic_tint(tint_hex, tint_alpha), 0)
+            data = _WINCOMPATTRDATA(WCA_ACCENT_POLICY, ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p),
+                                    ctypes.sizeof(accent))
+            if _SetWCA(hwnd, ctypes.byref(data)):
+                return True
+        return False
+    except Exception:
+        log.exception("set_frosted failed")
+        return False
+
+
+def set_rounded_shape(hwnd: int, width: int, height: int, radius: int) -> None:
+    """Clip the window (and its blur) to a rounded rectangle; radius 0 = square/no clipping."""
+    if not IS_WINDOWS or not hwnd:
+        return
+    try:
+        if radius > 0:
+            rgn = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2)
+            user32.SetWindowRgn(hwnd, rgn, True)       # Windows owns the region afterwards
+        else:
+            user32.SetWindowRgn(hwnd, None, True)
+        if dwmapi is not None:                          # Windows 11: smooth system rounding too
+            pref = ctypes.c_int(DWMWCP_ROUND if radius > 0 else DWMWCP_DONOTROUND)
+            dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+                                         ctypes.byref(pref), ctypes.sizeof(pref))
+    except Exception:
+        log.exception("set_rounded_shape failed")

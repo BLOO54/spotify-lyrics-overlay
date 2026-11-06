@@ -123,6 +123,32 @@ def self_test(report_path: str | None) -> int:
     return 0 if ok else 1
 
 
+def _make_backdrop(app):
+    """A full-screen window of bold stripes, so a screen grab can show whether glass blurs it."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QColor, QPainter
+    from PySide6.QtWidgets import QWidget
+
+    class Stripes(QWidget):
+        def paintEvent(self, _):
+            p = QPainter(self)
+            cols = [QColor("#ef4444"), QColor("#facc15"), QColor("#22c55e"), QColor("#3b82f6"), QColor("#ffffff")]
+            w = 28
+            for i in range(-self.height() // w, self.width() // w + self.height() // w + 2):
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(cols[i % len(cols)])
+                x = i * w
+                p.drawPolygon([QPointF(x, 0), QPointF(x + w, 0),
+                               QPointF(x + w - self.height(), self.height()), QPointF(x - self.height(), self.height())])
+            p.end()
+
+    w = Stripes()
+    w.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+    w.setGeometry(app.primaryScreen().geometry())
+    w.show()
+    return w
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--demo", action="store_true")
@@ -132,6 +158,8 @@ def main() -> int:
     parser.add_argument("--report")
     parser.add_argument("--screenshot")
     parser.add_argument("--quit-after", type=float, default=0)
+    parser.add_argument("--screen-grab", help="CI: photograph the real screen under the overlay")
+    parser.add_argument("--test-backdrop", action="store_true", help="CI: bright stripes behind the overlay")
     args, _ = parser.parse_known_args()
 
     log_file = setup_logging()
@@ -168,14 +196,26 @@ def main() -> int:
                                     "Look for its icon in the system tray (bottom-right of the taskbar).")
             return 0
 
+    backdrop = None
+    if args.test_backdrop:
+        backdrop = _make_backdrop(app)
+
     from app.controller import Controller
     ctl = Controller(app, demo=args.demo, demo_song=args.demo_song, demo_start=args.demo_start)
     log.info("Started (demo=%s)", args.demo)
 
-    if args.screenshot:
+    if args.screenshot or args.screen_grab:
         def snap():
-            ok = ctl.overlay.grab().save(args.screenshot)
-            log.info("Screenshot saved=%s to %s", ok, args.screenshot)
+            if args.screenshot:
+                ok = ctl.overlay.grab().save(args.screenshot)
+                log.info("Screenshot saved=%s to %s", ok, args.screenshot)
+            if args.screen_grab:
+                g = ctl.overlay.frameGeometry()
+                pad = 24
+                shot = app.primaryScreen().grabWindow(0, g.x() - pad, g.y() - pad, g.width() + pad * 2,
+                                                      g.height() + pad * 2)
+                log.info("Screen grab saved=%s frosted_active=%s", shot.save(args.screen_grab),
+                         ctl.overlay._frosted_active)
         QTimer.singleShot(int(max(1.0, args.quit_after - 0.5) * 1000), snap)
     if args.quit_after:
         QTimer.singleShot(int(args.quit_after * 1000), ctl.quit)

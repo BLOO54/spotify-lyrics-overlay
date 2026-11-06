@@ -481,3 +481,48 @@ def test_smart_timing_respects_span_and_short_lines():
     assert ln.words[0].start == 10.0 and ln.words[-1].end <= 11.0
     ly = lrc.build_lyrics("[00:01.00]hello there\n[00:05.00]x\n", estimate_mode="letters")
     assert ly.lines[0].words and not ly.lines[0].word_timed
+
+
+# ---------------------------------------------------------------- preference: word > line > plain
+WORDY = "[00:03.00]<00:03.00>first <00:03.50>line <00:04.00>here <00:05.00>\n[02:00.00]<02:00.00>mid <02:01.00>\n"
+
+
+def test_has_word_timing():
+    from app.lyrics_provider import has_word_timing
+    assert has_word_timing(WORDY) and not has_word_timing(RIGHT) and not has_word_timing(None)
+
+
+def test_prefers_word_timed_version_of_same_recording(tmp_path):
+    routes = [
+        ("/api/get", {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": RIGHT}),
+        ("/api/search", [
+            {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": RIGHT},
+            {"id": 2, "trackName": "Song", "artistName": "Artist", "duration": 246, "syncedLyrics": WORDY},
+        ]),
+    ]
+    assert LrclibClient(tmp_path, make_opener(routes, [])).fetch("Song", "Artist", "", 245).synced == WORDY
+
+
+def test_word_timed_version_of_other_recording_is_not_used(tmp_path):
+    routes = [
+        ("/api/get", {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245, "syncedLyrics": RIGHT}),
+        ("/api/search", [{"id": 2, "trackName": "Song", "artistName": "Artist", "duration": 252, "syncedLyrics": WORDY}]),
+    ]
+    assert LrclibClient(tmp_path, make_opener(routes, [])).fetch("Song", "Artist", "", 245).synced == RIGHT
+
+
+def test_synced_beats_plain(tmp_path):
+    routes = [
+        ("/api/get", {"id": 1, "trackName": "Song", "artistName": "Artist", "duration": 245,
+                      "syncedLyrics": None, "plainLyrics": "just text"}),
+        ("/api/search", [{"id": 2, "trackName": "Song", "artistName": "Artist", "duration": 247, "syncedLyrics": RIGHT}]),
+    ]
+    r = LrclibClient(tmp_path, make_opener(routes, [])).fetch("Song", "Artist", "", 245)
+    assert r.synced == RIGHT
+
+
+def test_acrylic_tint_byte_order():
+    from app.win32 import acrylic_tint
+    # Windows wants 0xAABBGGRR
+    assert acrylic_tint("#112233", 1.0) == 0xFF332211
+    assert acrylic_tint("#FF0000", 0.0) == 0x000000FF

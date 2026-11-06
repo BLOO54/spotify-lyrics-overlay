@@ -45,6 +45,8 @@ TRANSLATION_LAYOUTS = [("big", "Translation big (karaoke), original small undern
                        ("small", "Original big, translation small underneath")]
 WORD_TIMING_CHOICES = [("syllables", "Smart – by syllables (recommended)"),
                        ("letters", "Simple – by number of letters")]
+BG_STYLES = [("solid", "Solid (see-through colour)"),
+             ("frosted", "Frosted glass (blurs what's behind)")]
 PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
              ("deepl", "DeepL – better quality, needs a free API key")]
 
@@ -253,10 +255,31 @@ class SettingsDialog(QDialog):
 
         self._w["show_background"] = self._check("Show background box (untick for lyrics only)", "show_background")
         f.addRow(self._w["show_background"])
+        self._w["background_style"] = bs = QComboBox()
+        for key, label in BG_STYLES:
+            bs.addItem(label, key)
+        bs.setCurrentIndex([k for k, _ in BG_STYLES].index(self.s.background_style))
+        bs.currentIndexChanged.connect(lambda i: self._set("background_style", bs.itemData(i)))
+        f.addRow("Background style", bs)
+        f.addRow(_hint("Frosted glass needs Windows “Transparency effects” on (Settings → Personalization → "
+                       "Colors). If it's off, the normal background is used."))
+        self._w["corner_radius"] = self._spin(0, 40, "corner_radius", " px")
+        f.addRow("Corner rounding", self._w["corner_radius"])
         self._w["background_opacity"] = self._slider("background_opacity", 0)
         f.addRow("Background opacity", self._w["background_opacity"])
         self._w["window_opacity"] = self._slider("window_opacity", 10)
         f.addRow("Overall opacity", self._w["window_opacity"])
+
+        sep = QLabel("<b>Match the album art</b>")
+        sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")
+        f.addRow(sep)
+        self._w["match_album_highlight"] = self._check("Highlight colours from the album art", "match_album_highlight")
+        f.addRow(self._w["match_album_highlight"])
+        self._w["match_album_background"] = self._check("Background colour from the album art", "match_album_background")
+        f.addRow(self._w["match_album_background"])
+        self._w["smooth_colour_changes"] = self._check("Fade colours smoothly between songs", "smooth_colour_changes")
+        f.addRow(self._w["smooth_colour_changes"])
+        f.addRow(_hint("Works even when the album art itself is hidden (Layout → Show album art)."))
         return w
 
     def _layout_tab(self):

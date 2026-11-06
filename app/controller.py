@@ -128,8 +128,8 @@ class Controller(QObject):
 
         if demo:
             from .demo import DemoPlayer
-            self.demo_player = DemoPlayer(self.bridge.media.emit, demo_song,
-                                          resource_path("assets/icon.png"), demo_start)
+            art = resource_path("assets/demo_cover.png" if demo_song == "jp" else "assets/icon.png")
+            self.demo_player = DemoPlayer(self.bridge.media.emit, demo_song, art, demo_start)
             self.demo_player.start()
         else:
             self.watcher = MediaWatcher(self.bridge.media.emit, self.s.spotify_only)

@@ -22,15 +22,18 @@ import math
 import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QLinearGradient,
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QLinearGradient,
                            QPainter, QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QWidget
 
 from . import win32
 from .config import Settings
 from .lrc import Line, Lyrics, split_tokens, timed_copy, wrap_rows
+from .palette import extract_palette, mix_hex
 
 LINE_ANIM_SECONDS = 0.28
+COLOUR_FADE_SECONDS = 0.45     # how quickly colours glide to a new song's palette
+COLOUR_KEYS = ("text_color", "highlight_color", "highlight_color2", "background_color")
 SUNG_FADE = 0.35
 MAX_MAIN_ROWS = 3      # a long current line may wrap onto up to 3 rows
 MAX_SIDE_ROWS = 2      # previous / next / romaji / translation: up to 2 rows
@@ -104,11 +107,41 @@ class OverlayWindow(QWidget):
 
         self._art_bytes: bytes | None = None
         self._art_pix: QPixmap | None = None
+        self._palette: dict | None = None      # colours picked from the album art
+        self._cur_cols: dict[str, str] = {}     # colours on screen right now (they fade to the targets)
+        self._col_time = time.monotonic()
+        self._frosted_active = False
         self._line_idx = -2
         self._anim_start = 0.0
         self._drag_offset = None
         self._hover = False
         self.apply_settings()
+
+    # ------------------------------------------------------------ colours
+    def target_colours(self) -> dict:
+        """The colours we're heading for: from Settings, or from the album art if matching is on."""
+        t = {k: getattr(self.s, k) for k in COLOUR_KEYS}
+        pal = self._palette
+        if pal:
+            if self.s.match_album_highlight:
+                t["highlight_color"], t["highlight_color2"] = pal["highlight"], pal["highlight2"]
+            if self.s.match_album_background:
+                t["background_color"] = pal["background"]
+        return t
+
+    def step_colours(self, now: float | None = None):
+        """Move the on-screen colours a little closer to their targets (called every frame)."""
+        now = time.monotonic() if now is None else now
+        dt = max(0.0, now - self._col_time)
+        self._col_time = now
+        target = self.target_colours()
+        f = 1.0 if not self.s.smooth_colour_changes else (1.0 - math.exp(-dt / COLOUR_FADE_SECONDS) if dt else 0.0)
+        for k, goal in target.items():
+            cur = self._cur_cols.get(k)
+            self._cur_cols[k] = goal if (cur is None or f >= 0.999) else mix_hex(cur, goal, f)
+
+    def _c(self, key: str) -> str:
+        return self._cur_cols.get(key) or getattr(self.s, key)
 
     # ------------------------------------------------------------ settings / layout
     def fonts(self):
@@ -304,7 +337,25 @@ class OverlayWindow(QWidget):
         self._art_pix = None          # re-scale album art for the new size
         self.reposition()             # keeps the overlay anchored (and on-screen) when its size changes
         self.apply_click_through()
+        self.apply_backdrop()
         self.update()
+
+    def _radius(self) -> float:
+        return float(max(0, min(self.s.corner_radius, self.height() / 2)))
+
+    def apply_backdrop(self):
+        """Frosted glass on/off (Windows only). Falls back to the normal background if refused."""
+        want = self.s.background_style == "frosted" and self.s.show_background
+        if not win32.IS_WINDOWS or not self.isVisible():
+            self._frosted_active = False
+            return
+        hwnd = int(self.winId())
+        tint = self.target_colours()["background_color"]
+        self._frosted_active = win32.set_frosted(hwnd, want, tint, min(0.6, self.s.background_opacity * 0.5))
+        if want and not self._frosted_active:
+            win32.set_frosted(hwnd, False)
+        win32.set_rounded_shape(hwnd, self.width(), self.height(),
+                                int(self._radius()) if self._frosted_active else 0)
 
     def target_screen(self):
         screens = QApplication.screens()
@@ -354,6 +405,7 @@ class OverlayWindow(QWidget):
         super().showEvent(e)
         if win32.IS_WINDOWS:
             win32.set_overlay_styles(int(self.winId()), self.s.click_through)
+            self.apply_backdrop()
 
     def keep_on_top(self):
         if self.isVisible():
@@ -372,9 +424,29 @@ class OverlayWindow(QWidget):
         had = bool(self._art_bytes)
         self._art_bytes = data
         self._art_pix = None
+        self._palette = self._palette_from(data) if data else None
+        if self.s.match_album_background and self._frosted_active:
+            self.apply_backdrop()          # new glass tint for the new song
         if had != bool(data) and self._art_mode() == "left":
             self.apply_settings()     # make / free room for the big album art
         self.update()
+
+    @staticmethod
+    def _palette_from(data: bytes):
+        try:
+            img = QImage.fromData(data)
+            if img.isNull():
+                return None
+            small = img.scaled(24, 24, Qt.AspectRatioMode.IgnoreAspectRatio,
+                               Qt.TransformationMode.FastTransformation)
+            px = []
+            for y in range(small.height()):
+                for x in range(small.width()):
+                    c = small.pixelColor(x, y)
+                    px.append((c.red(), c.green(), c.blue()))
+            return extract_palette(px)
+        except Exception:
+            return None
 
     def set_lyrics(self, lyrics: Lyrics | None, status: str = ""):
         self.lyrics = lyrics
@@ -440,7 +512,7 @@ class OverlayWindow(QWidget):
 
     # ------------------------------------------------------------ painting helpers
     def _outline_color(self, alpha: float) -> QColor:
-        light_text = QColor(self.s.text_color).lightness() > 128
+        light_text = QColor(self._c("text_color")).lightness() > 128
         c = QColor(0, 0, 0) if light_text else QColor(255, 255, 255)
         c.setAlphaF(_clamp01(alpha))
         return c
@@ -513,12 +585,13 @@ class OverlayWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        self.step_colours()
         self._paint_background(p)
 
         if self._art_mode() == "left" and self._art_bytes:
             side = self._left_art_side()
             top = (self.height() - self._progress_h - side) / 2
-            self._paint_art(p, float(self._pad), top, side)
+            self._paint_art(p, float(self._pad), top, side, radius=min(10.0, self._radius() * 0.7))
         area = self.lyric_area()
 
         main_f, ctx_f, head_f, extra_f = self.fonts()
@@ -540,19 +613,33 @@ class OverlayWindow(QWidget):
 
     def _paint_background(self, p: QPainter):
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        radius = min(18.0, r.height() / 4)
+        radius = min(self._radius(), r.height() / 2)
         if self.s.show_background:
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(_qc(self.s.background_color, self.s.background_opacity))
-            p.drawRoundedRect(r, radius, radius)
+            if self._frosted_active:
+                # Windows blurs what's behind; we add a light tint and a glassy sheen on top
+                p.setBrush(_qc(self._c("background_color"), self.s.background_opacity * 0.55))
+                p.drawRoundedRect(r, radius, radius)
+                sheen = QLinearGradient(r.topLeft(), r.bottomLeft())
+                sheen.setColorAt(0.0, QColor(255, 255, 255, 34))
+                sheen.setColorAt(0.45, QColor(255, 255, 255, 8))
+                sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+                p.setBrush(QBrush(sheen))
+                p.drawRoundedRect(r, radius, radius)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(QBrush(QColor(255, 255, 255, 40)), 1.0))
+                p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+            else:
+                p.setBrush(_qc(self._c("background_color"), self.s.background_opacity))
+                p.drawRoundedRect(r, radius, radius)
         draw_edge = (self.s.show_background and self.s.background_opacity > 0.02) or \
                     (self._hover and not self.s.click_through)
         if draw_edge:
             # thin neon edge; brighter while hovering (shows you can drag it)
             g = QLinearGradient(r.topLeft(), r.topRight())
             a = 0.55 if self._hover and not self.s.click_through else 0.28
-            g.setColorAt(0, _qc(self.s.highlight_color, a))
-            g.setColorAt(1, _qc(self.s.highlight_color2, a))
+            g.setColorAt(0, _qc(self._c("highlight_color"), a))
+            g.setColorAt(1, _qc(self._c("highlight_color2"), a))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(QPen(QBrush(g), 1.4))
             p.drawRoundedRect(r, radius, radius)
@@ -579,7 +666,7 @@ class OverlayWindow(QWidget):
         p.drawPixmap(rect, self._art_pix, src)
         p.restore()
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QBrush(_qc(self.s.highlight_color, 0.35)), 1.0))
+        p.setPen(QPen(QBrush(_qc(self._c("highlight_color"), 0.35)), 1.0))
         p.drawRoundedRect(rect, radius, radius)
 
     def _paint_header(self, p: QPainter, f: QFont, row, area):
@@ -599,7 +686,7 @@ class OverlayWindow(QWidget):
         right_edge = right
         if t:
             tw = fm.horizontalAdvance(t)
-            p.setPen(_qc(self.s.text_color, 0.85))
+            p.setPen(_qc(self._c("text_color"), 0.85))
             p.drawText(QPointF(right_edge - tw, base), t)
             right_edge -= tw + 14
         label = self.word_mode_label
@@ -608,7 +695,7 @@ class OverlayWindow(QWidget):
         if self.s.show_title and label:
             lw = fm.horizontalAdvance(label)
             if right_edge - lw > x + 160:          # only if there's room left for the title
-                p.setPen(_qc(self.s.highlight_color, 0.75))
+                p.setPen(_qc(self._c("highlight_color"), 0.75))
                 p.drawText(QPointF(right_edge - lw, base), label)
                 right_edge -= lw + 14
         if self.s.show_title:
@@ -618,7 +705,7 @@ class OverlayWindow(QWidget):
             else:
                 text = "♪ Spotify Lyrics Overlay"
             text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x))
-            p.setPen(_qc(self.s.text_color, 0.72))
+            p.setPen(_qc(self._c("text_color"), 0.72))
             p.drawText(QPointF(x, base), text)
 
     def _paint_progress(self, p: QPainter, area):
@@ -630,11 +717,11 @@ class OverlayWindow(QWidget):
         y = self.height() - self._pad * 0.6 - 3
         prog = _clamp01(self.play_pos / self.duration)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_qc(self.s.text_color, 0.15))
+        p.setBrush(_qc(self._c("text_color"), 0.15))
         p.drawRoundedRect(QRectF(left, y, right - left, 3), 1.5, 1.5)
         g = QLinearGradient(left, 0, right, 0)
-        g.setColorAt(0, _qc(self.s.highlight_color))
-        g.setColorAt(1, _qc(self.s.highlight_color2))
+        g.setColorAt(0, _qc(self._c("highlight_color")))
+        g.setColorAt(1, _qc(self._c("highlight_color2")))
         p.setBrush(QBrush(g))
         p.drawRoundedRect(QRectF(left, y, (right - left) * prog, 3), 1.5, 1.5)
 
@@ -647,7 +734,7 @@ class OverlayWindow(QWidget):
             return top + h / 2
 
         ly = self.lyrics
-        text_col = self.s.text_color
+        text_col = self._c("text_color")
         if not ly or not ly.synced:
             msg = self.status or ("Instrumental ♪" if ly and ly.instrumental else "")
             self._paint_simple_line(p, main_f, msg, cy("main"), _qc(text_col, 0.7), area, MAX_MAIN_ROWS)
@@ -656,6 +743,8 @@ class OverlayWindow(QWidget):
         t = self.position
         idx = ly.line_index_at(t)
         if idx != self._line_idx:
+            # forward by one line: the old line drifts up and fades (a jump/seek just cuts)
+            self._fade_from = self._line_idx if idx == self._line_idx + 1 else None
             self._line_idx = idx
             self._anim_start = time.monotonic()
         a = _ease((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
@@ -685,9 +774,15 @@ class OverlayWindow(QWidget):
                     col = _qc(text_col, 0.7)              # the original lyrics, small and calm
                 else:
                     tf.setItalic(True)
-                    col = _with_alpha(_mix(_qc(text_col), _qc(self.s.highlight_color2), 0.35), 0.9)
+                    col = _with_alpha(_mix(_qc(text_col), _qc(self._c("highlight_color2")), 0.35), 0.9)
                 self._paint_simple_line(p, tf, self._under_text(idx), cy("trans") + slide,
                                         _with_alpha(col, col.alphaF() * a), area, MAX_SIDE_ROWS)
+
+        old = getattr(self, "_fade_from", None)
+        if a < 1.0 and old is not None and 0 <= old < len(lines) and not lines[old].is_break:
+            sung = _mix(_qc(text_col), _qc(self._c("highlight_color")), 0.45 if self.s.keep_sung_colored else 0.0)
+            self._paint_simple_line(p, main_f, self._main_text(old), cy("main") - a * self._ctx_h * 0.9,
+                                    _with_alpha(sung, 0.85 * (1 - a)), area, self._row_caps["main"])
 
         if idx < 0:
             remaining = max(0.0, (lines[0].start if lines else 0) - t)
@@ -706,9 +801,9 @@ class OverlayWindow(QWidget):
                             alpha: float, area):
         left, right = area
         avail = right - left - self._pad * 0.5
-        text_c = _qc(self.s.text_color, alpha)
-        hi1 = _qc(self.s.highlight_color, alpha)
-        hi2 = _qc(self.s.highlight_color2, alpha)
+        text_c = _qc(self._c("text_color"), alpha)
+        hi1 = _qc(self._c("highlight_color"), alpha)
+        hi2 = _qc(self._c("highlight_color2"), alpha)
         oa = 0.55 * alpha
         style = self.s.highlight_style
 
@@ -737,7 +832,7 @@ class OverlayWindow(QWidget):
             prog = _clamp01((t - line.start) / max(line.end - line.start, 0.1))
             bar_y = first_cy + (len(rows) - 1) * line_h + (fm.ascent() - fm.descent()) / 2 + fm.descent() + 4
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(_qc(self.s.text_color, 0.15 * alpha))
+            p.setBrush(_qc(self._c("text_color"), 0.15 * alpha))
             p.drawRoundedRect(QRectF(x0, bar_y, x1 - x0, 3), 1.5, 1.5)
             g = QLinearGradient(x0, 0, x1, 0)
             g.setColorAt(0, hi1)
@@ -774,11 +869,22 @@ class OverlayWindow(QWidget):
     def _paint_current_word(self, p, path, grad, style, x, w, base, top, height, fm,
                             prog, since, text_c, hi1, oa):
         if style == "wipe":
-            self._draw_text(p, path, text_c, oa, glow=hi1)
+            self._draw_text(p, path, text_c, oa, glow=hi1, glow_strength=0.4 + 0.6 * prog)
+            # soft-edged sweep: solid colour up to the edge, then a short fade
+            feather = max(6.0, min(22.0, w * 0.35))
+            edge = x - feather + (w + feather * 2) * prog
             p.save()
-            p.setClipRect(QRectF(x - 2, top - 4, (w + 4) * prog, height + 8))
+            p.setClipRect(QRectF(x - 4, top - 4, max(0.0, edge - x + 4), height + 8))
             p.fillPath(path, QBrush(grad))
             p.restore()
+            steps = 6
+            for k in range(steps):
+                x0 = edge + feather * k / steps
+                p.save()
+                p.setOpacity(1.0 - (k + 1) / (steps + 1))
+                p.setClipRect(QRectF(x0, top - 4, feather / steps + 0.5, height + 8))
+                p.fillPath(path, QBrush(grad))
+                p.restore()
         elif style == "word":
             pop = _clamp01(since / 0.12)
             self._draw_text(p, path, _mix(text_c, hi1, pop), oa, glow=hi1, glow_strength=pop)

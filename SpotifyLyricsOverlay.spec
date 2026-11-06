@@ -14,7 +14,7 @@ hidden = [
     "winrt.windows.storage.streams",
 ]
 binaries = []
-datas = [("assets/icon.png", "assets"), ("assets/icon.ico", "assets")]
+datas = [("assets/icon.png", "assets"), ("assets/icon.ico", "assets"), ("assets/demo_cover.png", "assets")]
 try:
     datas += collect_data_files("pykakasi")      # romaji dictionaries
     hidden += collect_submodules("pykakasi")

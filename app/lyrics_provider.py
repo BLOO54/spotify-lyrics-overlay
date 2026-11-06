@@ -87,6 +87,14 @@ def lyrics_end(synced: str | None) -> float:
     return last
 
 
+_WORD_TAG = re.compile(r"<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>")
+
+
+def has_word_timing(synced: str | None) -> bool:
+    """True for "enhanced" LRC, which times every word (best for karaoke)."""
+    return bool(synced) and len(_WORD_TAG.findall(synced)) >= 3
+
+
 def fits_song(synced: str | None, duration: float) -> bool:
     """False when the lyrics keep going after the song has ended - a sign they were
     timed against a different version (edit / remaster / upload) of the song."""
@@ -169,6 +177,8 @@ class LrclibClient:
             score = 0.0
             if it.get("syncedLyrics"):
                 score += 50
+                if has_word_timing(it["syncedLyrics"]):
+                    score += 20       # word-by-word timing beats line timing
             elif it.get("plainLyrics") or it.get("instrumental"):
                 score += 5
             else:
@@ -234,11 +244,22 @@ class LrclibClient:
         suspect = bool(result.synced) and not fits_song(result.synced, duration)
         if suspect:
             log.info("Lyrics for %s - %s run past the song's end; looking for a better version", artist, title)
-        if (not result.synced and not result.instrumental) or suspect:
+        # Order of preference: word-timed > line-timed > untimed (plain) lyrics.
+        want_better = (not result.synced and not result.instrumental) or suspect \
+            or (bool(result.synced) and not has_word_timing(result.synced))
+        if want_better:
             ranked = [(s, it) for s, it in self._rank(self._search_all(title, artist), title, artist, duration)
                       if s > 0]
             fitting = [it for s, it in ranked if it.get("syncedLyrics") and fits_song(it["syncedLyrics"], duration)]
-            if fitting:
+
+            def same_length(it):    # only swap to a word-timed version of the *same* recording
+                d = it.get("duration")
+                return not duration or not isinstance(d, (int, float)) or abs(d - duration) <= 3
+
+            worded = [it for it in fitting if has_word_timing(it["syncedLyrics"]) and same_length(it)]
+            if worded:
+                result = self._to_result(worded[0])
+            elif fitting and (not result.synced or suspect):
                 result = self._to_result(fitting[0])
             elif ranked and not result.synced:
                 cand = self._to_result(ranked[0][1])

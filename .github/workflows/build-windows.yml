@@ -93,22 +93,25 @@ jobs:
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
           $cfg = "$env:APPDATA\SpotifyLyricsOverlay\settings.json"
           $shots = [ordered]@{
-            "translation-big"   = @{ song = "jp"; at = 6; s = @{ theme = "Neon"; translate_enabled = $true; translation_layout = "big"; show_album_art = $true; time_display = "left" } }
-            "translation-small" = @{ song = "jp"; at = 6; s = @{ theme = "Neon"; translate_enabled = $true; translation_layout = "small"; show_album_art = $true; time_display = "left" } }
-            "translation-big-narrow-romaji" = @{ song = "jp"; at = 6; s = @{ theme = "Ocean"; highlight_color = "#22D3EE"; highlight_color2 = "#3B82F6"; background_color = "#04121C"; width = 360; lines_shown = 2; translate_enabled = $true; translation_layout = "big"; show_romaji = $true; time_display = "elapsed" } }
-            "long-widen"        = @{ song = "1";  at = 22; s = @{ theme = "Neon"; width = 520; long_lines = "widen"; show_album_art = $true; time_display = "left" } }
+            "solid-backdrop"   = @{ song = "1";  at = 6; grab = $true; s = @{ theme = "Neon"; background_style = "solid"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
+            "frosted-backdrop" = @{ song = "1";  at = 6; grab = $true; s = @{ theme = "Neon"; background_style = "frosted"; corner_radius = 24; show_album_art = $true; time_display = "left" } }
+            "album-match"      = @{ song = "jp"; at = 6; grab = $false; s = @{ theme = "Neon"; match_album_highlight = $true; match_album_background = $true; show_album_art = $true; translate_enabled = $true; time_display = "left" } }
+            "square-corners"   = @{ song = "1";  at = 6; grab = $false; s = @{ theme = "Neon"; corner_radius = 0; lines_shown = 2 } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
             $conf["first_run"] = $false
             $conf | ConvertTo-Json | Set-Content -Encoding utf8 $cfg
-            Start-Process $exe -ArgumentList "--demo","--demo-song",$shots[$name].song,"--demo-start",$shots[$name].at,"--screenshot","$PWD\demo-overlay-$name.png","--quit-after","4" -Wait
+            $argv = @("--demo","--demo-song",$shots[$name].song,"--demo-start",$shots[$name].at,"--screenshot","$PWD\demo-overlay-$name.png","--quit-after","5")
+            if ($shots[$name].grab) { $argv += @("--test-backdrop","--screen-grab","$PWD\demo-overlay-$name-screen.png") }
+            Start-Process $exe -ArgumentList $argv -Wait
             if (-not (Test-Path "demo-overlay-$name.png")) {
               Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 40 -ErrorAction SilentlyContinue
               throw "No screenshot for $name"
             }
           }
           Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 20 -ErrorAction SilentlyContinue
+          Copy-Item "$env:APPDATA\SpotifyLyricsOverlay\app.log" ci-app-log.txt -ErrorAction SilentlyContinue
 
       - name: Build installer (Inno Setup)
         run: |
@@ -151,6 +154,8 @@ jobs:
             pytest-output.txt
             selftest-*.txt
             lyrics-check.txt
+            ci-app-log.txt
+            demo-overlay-*-screen.png
           fail_on_unmatched_files: false
           overwrite_files: true
 
