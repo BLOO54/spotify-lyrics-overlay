@@ -99,7 +99,9 @@ jobs:
           "Windows: $([System.Environment]::OSVersion.VersionString) | Transparency effects before: $before" | Tee-Object -FilePath ci-glass-info.txt
           # the test runs below: frosted with transparency OFF (should fall back) and ON (should blur)
           $shots = [ordered]@{
-            "sanity" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; show_album_art = $true; time_display = "left" } }
+            "fixed-lyrics-30" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 700; long_lines = "shrink"; fixed_size = $true; fixed_height = 170; font_size = 30; side_font_size = 18; title_font_size = 13; time_display = "left" } }
+            "fixed-lyrics-48" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 700; long_lines = "shrink"; fixed_size = $true; fixed_height = 170; font_size = 48; side_font_size = 18; title_font_size = 13; time_display = "left" } }
+            "fixed-lyrics-70" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 700; long_lines = "shrink"; fixed_size = $true; fixed_height = 170; font_size = 70; side_font_size = 18; title_font_size = 13; time_display = "left" } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s

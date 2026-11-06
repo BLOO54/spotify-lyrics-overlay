@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.9.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.10.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.9.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.10.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -128,6 +128,11 @@ Open Settings (**Ctrl+Alt+O**, or right-click the tray icon). There are four tab
 | **Behaviour** | Click-through, hide while paused, Spotify only |
 
 Pick a theme first, then tweak anything you like (the theme then shows as "Custom").
+
+**Text sizes:** *Lyrics size* is the big current line only. *Other lines size* covers the previous/next lines,
+translation and romaji, and *Title & timer size* the top row. **Keep overlay size fixed** (Layout tab) freezes the
+box at its current size: making the lyrics bigger then uses the space inside the box (the other lines step back
+to make room) instead of making the box grow.
 
 **Long lines** (Settings → Layout → *Long lines*) - pick what happens when a line is longer than the overlay:
 * **Make the overlay wider** (default): the box stretches to fit the line on one row, but never past the edge

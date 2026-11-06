@@ -114,6 +114,10 @@ class OverlayWindow(QWidget):
         self._cur_cols: dict[str, str] = {}     # colours on screen right now (they fade to the targets)
         self._col_time = time.monotonic()
         self._frosted_active = False
+        self._fit_main = 1.0
+        self._fit_side = 1.0
+        self._fit_all = 1.0
+        self._dropped: set = set()
         self._line_idx = -2
         self._anim_start = 0.0
         self._drag_offset = None
@@ -148,17 +152,22 @@ class OverlayWindow(QWidget):
 
     # ------------------------------------------------------------ settings / layout
     def fonts(self):
+        """Fonts for: big lyric line, other lines, title row, translation/romaji.
+
+        _fit_side / _fit_main / _fit_all are below 1 only when "Keep overlay size fixed" is on
+        and the text wouldn't otherwise fit in the box."""
+        fm, fa = self._fit_main * self._fit_all, self._fit_side * self._fit_all
         main = QFont(self.s.font_family, -1)
-        main.setPixelSize(self.s.font_size)
+        main.setPixelSize(max(8, int(self.s.font_size * fm)))
         main.setBold(self.s.bold)
         ctx = QFont(main)
-        ctx.setPixelSize(max(8, int(self.s.font_size * 0.62)))
+        ctx.setPixelSize(max(8, int(self.s.side_font_size * fa)))
         ctx.setBold(False)
         head = QFont(self.s.font_family, -1)
-        head.setPixelSize(max(9, int(self.s.font_size * 0.45)))
+        head.setPixelSize(max(8, int(self.s.title_font_size * fa)))
         head.setBold(True)
         extra = QFont(ctx)
-        extra.setPixelSize(max(8, int(self.s.font_size * 0.55)))
+        extra.setPixelSize(max(8, int(self.s.side_font_size * 0.89 * fa)))
         return main, ctx, head, extra
 
     def _show_romaji(self) -> bool:
@@ -214,14 +223,17 @@ class OverlayWindow(QWidget):
             pos = "left" if self.s.width >= 700 else "header"
         return pos
 
-    HEADER_ART_SCALE = {"small": 0.87, "medium": 1.45, "large": 2.0}   # x font size
+    HEADER_ART_SCALE = {"small": 1.93, "medium": 3.22, "large": 4.44}   # x title size
 
     def _header_art_side(self) -> float:
-        side = self.s.font_size * self.HEADER_ART_SCALE.get(self.s.header_art_size, 1.45)
+        side = self.s.title_font_size * self._fit_side * self._fit_all * self.HEADER_ART_SCALE.get(self.s.header_art_size, 3.22)
         return max(16.0, min(side, self.s.width * 0.2))
 
     def _left_art_side(self) -> int:
-        return int(min(self.s.width * 0.22, self.s.font_size * 4.2))
+        side = min(self.s.width * 0.22, self.s.side_font_size * self._fit_side * self._fit_all * 6.8)
+        if self.s.fixed_size and self.s.fixed_height:
+            side = min(side, self.s.fixed_height - 2 * self._pad - (8 if self.s.show_progress else 0))
+        return int(max(16, side))
 
     def lyric_area(self):
         """Horizontal space the lyrics may use (left, right)."""
@@ -272,8 +284,59 @@ class OverlayWindow(QWidget):
         return best
 
     def apply_settings(self):
+        self._fit_main = self._fit_side = self._fit_all = 1.0
+        self._dropped = set()
+        h = self._layout()
+        if self.s.fixed_size:
+            if self.s.fixed_height <= 0:          # just switched on: freeze the current height
+                self.s.fixed_height = int(h)
+                self.s.save()
+            target = self.s.fixed_height
+            if h > target:
+                # The lyrics come first. To make room in the fixed box:
+                # 1) shrink the other lines and the title (down to 60%) ...
+                self._fit_side = self._best_scale(lambda v: setattr(self, "_fit_side", v), 0.6, target)
+                # 2) ... then, only if needed, the big lyric line (down to half) ...
+                if self._layout() > target:
+                    self._fit_main = self._best_scale(lambda v: setattr(self, "_fit_main", v), 0.5, target)
+                # 3) ... and as a last resort everything together
+                if self._layout() > target:
+                    self._fit_all = self._best_scale(lambda v: setattr(self, "_fit_all", v), 0.3, target)
+                # 4) a really small box: hide the least important rows so the lyric still fits
+                for row in ("prev", "header", "next", "romaji", "trans"):
+                    if self._layout() <= target:
+                        break
+                    self._dropped.add(row)
+                self._layout()
+            h = target
+        self.setFixedSize(int(self._eff_width), int(h))
+        self.setWindowOpacity(self.s.window_opacity)
+        self._art_pix = None          # re-scale album art for the new size
+        self.reposition()             # keeps the overlay anchored (and on-screen) when its size changes
+        self.apply_click_through()
+        self.apply_backdrop()
+        self.update()
+
+    def _best_scale(self, set_scale, lowest: float, target: float) -> float:
+        """Largest scale in [lowest, 1] whose layout fits in `target` pixels (binary search)."""
+        lo, hi = lowest, 1.0
+        set_scale(lo)
+        if self._layout() > target:
+            return lo
+        for _ in range(8):
+            mid = (lo + hi) / 2
+            set_scale(mid)
+            if self._layout() <= target:
+                lo = mid
+            else:
+                hi = mid
+        set_scale(lo)
+        return lo
+
+    def _layout(self) -> float:
+        """Work out the rows; returns the height the overlay would naturally need."""
         main, ctx, head, extra = self.fonts()
-        self._pad = max(10, int(self.s.font_size * 0.45))
+        self._pad = max(8, int(self.s.title_font_size * self._fit_side * self._fit_all))
         ly = self.lyrics
         if ly and ly.synced:
             lyric_texts = [self._main_text(i) for i in range(len(ly.lines))]
@@ -283,7 +346,7 @@ class OverlayWindow(QWidget):
 
         # "Make the overlay wider": stretch to fit this song's longest line, but never past the screen
         self._eff_width = self.s.width
-        if self.s.long_lines == "widen":
+        if self.s.long_lines == "widen" and not self.s.fixed_size:
             left, right = self.lyric_area()
             overhead = self.s.width - (right - left - self._pad * 0.5)
             fm = QFontMetricsF(main)
@@ -337,6 +400,7 @@ class OverlayWindow(QWidget):
             self._rows.append(("trans", block(extra, n, 1.2, 1.0)))
         if self.s.lines_shown >= 2:
             self._rows.append(("next", block(ctx, ctx_rows)))
+        self._rows = [r for r in self._rows if r[0] not in self._dropped]
         self._row_caps = {"main": main_rows, "prev": ctx_rows, "next": ctx_rows,
                           "romaji": MAX_SIDE_ROWS, "trans": MAX_SIDE_ROWS}
         self._ctx_h = QFontMetricsF(ctx).height() * 1.25
@@ -344,13 +408,7 @@ class OverlayWindow(QWidget):
         h = self._pad * 2 + sum(r[1] for r in self._rows) + self._progress_h
         if self._art_mode() == "left" and self._art_bytes:
             h = max(h, self._left_art_side() + self._pad * 2 + self._progress_h)
-        self.setFixedSize(int(self._eff_width), int(h))
-        self.setWindowOpacity(self.s.window_opacity)
-        self._art_pix = None          # re-scale album art for the new size
-        self.reposition()             # keeps the overlay anchored (and on-screen) when its size changes
-        self.apply_click_through()
-        self.apply_backdrop()
-        self.update()
+        return h
 
     def _radius(self) -> float:
         return float(max(0, min(self.s.corner_radius, self.height() / 2)))
@@ -616,11 +674,9 @@ class OverlayWindow(QWidget):
         area = self.lyric_area()
 
         main_f, ctx_f, head_f, extra_f = self.fonts()
-        y = float(self._pad)
-        if self._art_mode() == "left" and self._art_bytes:
-            # centre the text block vertically next to tall album art
-            used = sum(h for _, h in self._rows)
-            y = max(y, (self.height() - self._progress_h - used) / 2)
+        # centre the text block vertically (next to tall album art, or in a fixed-size box)
+        used = sum(h for _, h in self._rows)
+        y = max(float(self._pad), (self.height() - self._progress_h - used) / 2)
         centers = {}
         for name, h in self._rows:
             centers[name] = (y, h)

@@ -483,6 +483,7 @@ class Controller(QObject):
             self.settings_dlg.show_hotkey_problems(failed)
 
     def _settings_changed(self):
+        before = self.s.fixed_height
         self.act_click.setChecked(self.s.click_through)
         self.act_show.setChecked(self.s.visible)
         if not self.demo:
@@ -492,6 +493,8 @@ class Controller(QObject):
         if self._last_result is not None:
             self._show_result(self._last_result)
         self._apply_visibility()
+        if self.settings_dlg and self.s.fixed_height != before:
+            self.settings_dlg.refresh()          # show the height that was just frozen
 
     def _on_dragged(self, x, y):
         self.s.position = "custom"

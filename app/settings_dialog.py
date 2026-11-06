@@ -232,7 +232,14 @@ class SettingsDialog(QDialog):
         fb.currentFontChanged.connect(lambda fnt: self._set("font_family", fnt.family()))
         f.addRow("Font", fb)
         self._w["font_size"] = self._spin(10, 120, "font_size", " px")
-        f.addRow("Font size", self._w["font_size"])
+        f.addRow("Lyrics size", self._w["font_size"])
+        self._w["side_font_size"] = self._spin(8, 80, "side_font_size", " px")
+        f.addRow("Other lines size", self._w["side_font_size"])
+        self._w["title_font_size"] = self._spin(8, 60, "title_font_size", " px")
+        f.addRow("Title && timer size", self._w["title_font_size"])
+        f.addRow(_hint("Lyrics size = the big current line. Other lines = previous/next lines, translation and "
+                       "romaji. To stop the box growing when you make text bigger, use Layout → "
+                       "Keep overlay size fixed."))
         self._w["bold"] = self._check("Bold", "bold")
         f.addRow(self._w["bold"])
 
@@ -340,6 +347,12 @@ class SettingsDialog(QDialog):
         sb.setCurrentIndex(max(0, min(self.s.screen_index, sb.count() - 1)))
         sb.currentIndexChanged.connect(lambda i: self._set("screen_index", i))
         f.addRow("Monitor", sb)
+        self._w["fixed_size"] = self._check("Keep overlay size fixed (text fits inside the box)", "fixed_size")
+        f.addRow(self._w["fixed_size"])
+        self._w["fixed_height"] = self._spin(0, 2000, "fixed_height", " px", step=10)
+        self._w["fixed_height"].setToolTip("Height of the box while 'Keep overlay size fixed' is on. "
+                                           "It's set to the current height when you switch it on.")
+        f.addRow("Fixed height", self._w["fixed_height"])
         self._w["width"] = self._spin(300, 4000, "width", " px", step=20)
         self._w["width"].setToolTip("With 'Make the overlay wider', this is the normal width; "
                                     "it stretches for long lines but never past the screen.")

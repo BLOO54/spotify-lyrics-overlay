@@ -37,7 +37,9 @@ def app_data_dir() -> Path:
 class Settings:
     # Text
     font_family: str = "Segoe UI"
-    font_size: int = 30
+    font_size: int = 30                  # LYRICS size: the big current line
+    side_font_size: int = 0              # previous/next lines, translation, romaji (0 = work it out from font_size)
+    title_font_size: int = 0             # song title, timer, sync label (0 = work it out from font_size)
     bold: bool = True
     text_color: str = "#FFFFFF"
     highlight_color: str = "#A855F7"     # purple
@@ -57,6 +59,8 @@ class Settings:
     match_album_background: bool = False # take the background colour from the album art
     smooth_colour_changes: bool = True   # fade colours gently when the song changes
     width: int = 1000
+    fixed_size: bool = False             # keep the overlay box exactly this size (lyrics fit inside it)
+    fixed_height: int = 0                # height used when fixed_size is on (0 = take the current height)
     # Placement
     position: str = "bottom-center"
     margin: int = 60
@@ -132,6 +136,14 @@ class Settings:
 
     def clamp(self) -> None:
         self.font_size = max(10, min(120, int(self.font_size)))
+        # older versions had one size for everything: keep their look by deriving the other two
+        if int(self.side_font_size) <= 0:
+            self.side_font_size = int(self.font_size * 0.62)
+        if int(self.title_font_size) <= 0:
+            self.title_font_size = int(self.font_size * 0.45)
+        self.side_font_size = max(8, min(80, int(self.side_font_size)))
+        self.title_font_size = max(8, min(60, int(self.title_font_size)))
+        self.fixed_height = max(0, min(2000, int(self.fixed_height)))
         self.background_opacity = max(0.0, min(1.0, float(self.background_opacity)))
         self.window_opacity = max(0.1, min(1.0, float(self.window_opacity)))
         self.width = max(300, min(4000, int(self.width)))

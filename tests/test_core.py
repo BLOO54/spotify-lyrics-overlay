@@ -526,3 +526,15 @@ def test_acrylic_tint_byte_order():
     # Windows wants 0xAABBGGRR
     assert acrylic_tint("#112233", 1.0) == 0xFF332211
     assert acrylic_tint("#FF0000", 0.0) == 0x000000FF
+
+
+def test_sizes_carry_over_from_older_versions(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    Settings.path().write_text(json.dumps({"font_size": 40}), encoding="utf-8")   # pre-1.10 settings
+    s = Settings.load()
+    assert (s.font_size, s.side_font_size, s.title_font_size) == (40, 24, 18)    # same look as before
+    s.font_size = 70
+    s.save()
+    s2 = Settings.load()
+    assert (s2.font_size, s2.side_font_size, s2.title_font_size) == (70, 24, 18) # only lyrics changed
