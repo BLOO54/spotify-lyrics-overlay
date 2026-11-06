@@ -169,6 +169,8 @@ class SettingsDialog(QDialog):
     capture_started = Signal()     # a shortcut button is waiting for keys
     capture_finished = Signal()    # done - shortcuts should be registered again
     check_updates_requested = Signal()
+    tap_sync_requested = Signal()
+    lyrics_folder_requested = Signal()
     update_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None):
@@ -378,8 +380,20 @@ class SettingsDialog(QDialog):
         self._w["sync_offset_ms"] = self._spin(-10000, 10000, "sync_offset_ms", " ms", step=50)
         self._w["sync_offset_ms"].setToolTip("Positive = lyrics appear earlier. Use if lyrics feel late.")
         f.addRow("Sync adjustment (all songs)", self._w["sync_offset_ms"])
-        f.addRow(_hint("For just one song, use Ctrl+Alt+← / → while it plays – it's remembered for that song. "
-                       "If a song's lyrics are badly off, try Ctrl+Alt+V for another lyrics version."))
+        f.addRow(_hint("For just one song, use the earlier / later shortcuts while it plays – it's remembered "
+                       "for that song. If a song's lyrics are badly off, try another lyrics version, or time it "
+                       "yourself:"))
+        row = QHBoxLayout()
+        tap = QPushButton("Sync the current song myself…")
+        tap.clicked.connect(self.tap_sync_requested)
+        folder = QPushButton("Open my lyrics folder")
+        folder.clicked.connect(self.lyrics_folder_requested)
+        row.addWidget(tap)
+        row.addWidget(folder)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        f.addRow(holder)
 
         sep = QLabel("<b>Translation</b>")
         sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")

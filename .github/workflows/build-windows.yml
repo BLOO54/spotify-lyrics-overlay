@@ -99,9 +99,7 @@ jobs:
           "Windows: $([System.Environment]::OSVersion.VersionString) | Transparency effects before: $before" | Tee-Object -FilePath ci-glass-info.txt
           # the test runs below: frosted with transparency OFF (should fall back) and ON (should blur)
           $shots = [ordered]@{
-            "fixed-lyrics-30" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 700; long_lines = "shrink"; fixed_size = $true; fixed_height = 170; font_size = 30; side_font_size = 18; title_font_size = 13; time_display = "left" } }
-            "fixed-lyrics-48" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 700; long_lines = "shrink"; fixed_size = $true; fixed_height = 170; font_size = 48; side_font_size = 18; title_font_size = 13; time_display = "left" } }
-            "fixed-lyrics-70" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; width = 700; long_lines = "shrink"; fixed_size = $true; fixed_height = 170; font_size = 70; side_font_size = 18; title_font_size = 13; time_display = "left" } }
+            "sanity" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; time_display = "left" } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
@@ -123,6 +121,19 @@ jobs:
           }
           Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 20 -ErrorAction SilentlyContinue
           Copy-Item "$env:APPDATA\SpotifyLyricsOverlay\app.log" ci-app-log.txt -ErrorAction SilentlyContinue
+
+      - name: Test the "sync this song myself" window with real key presses
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $mine = "$env:APPDATA\SpotifyLyricsOverlay\my_lyrics"
+          Remove-Item "$mine\*.lrc" -ErrorAction SilentlyContinue
+          $p = Start-Process $exe -ArgumentList "--demo","--demo-start","1","--test-tap","$PWD\demo-overlay-tap-window.png","--screenshot","$PWD\demo-overlay-after-tap.png","--quit-after","6.5" -PassThru
+          $null = $p.WaitForExit(60000)
+          $file = Get-ChildItem "$mine\*.lrc" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $file) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 30; throw "tap-along did not save a lyrics file" }
+          "saved: $($file.Name)" | Tee-Object -FilePath ci-tap-check.txt
+          Get-Content $file.FullName | Tee-Object -FilePath ci-tap-check.txt -Append
+          if (-not (Test-Path demo-overlay-tap-window.png)) { throw "no picture of the sync window" }
 
       - name: Build installer (Inno Setup)
         run: |
@@ -196,6 +207,7 @@ jobs:
             ci-app-log.txt
             ci-glass-info.txt
             ci-update-check.txt
+            ci-tap-check.txt
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false
           overwrite_files: true

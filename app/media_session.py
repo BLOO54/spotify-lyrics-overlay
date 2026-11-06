@@ -119,6 +119,30 @@ class MediaWatcher:
         self._thumb_key = None
         self._thumb: bytes | None = None
         self._thumb_tries = 0
+        self._commands: list[str] = []
+        self._session = None
+
+    def request(self, command: str):
+        """Ask the player to do something (e.g. "restart"). Runs on the watcher thread."""
+        self._commands.append(command)
+
+    async def _run_commands(self):
+        while self._commands:
+            cmd = self._commands.pop(0)
+            s = self._session
+            if s is None:
+                continue
+            try:
+                if cmd == "restart":
+                    info = s.get_playback_info()
+                    can_seek = bool(info and info.controls and info.controls.is_playback_position_enabled)
+                    if can_seek:
+                        await s.try_change_playback_position_async(0)
+                    else:
+                        await s.try_skip_previous_async()     # Spotify: "previous" restarts the song
+                    await s.try_play_async()
+            except Exception as e:
+                log.warning("media command %s failed: %s", cmd, e)
 
     def start(self):
         self._thread.start()
@@ -151,6 +175,7 @@ class MediaWatcher:
                 if manager is None:
                     manager = await Manager.request_async()
                 state = await self._read(manager)
+                await self._run_commands()
             except Exception as e:
                 log.warning("Media read failed: %s", e)
                 manager = None
@@ -167,6 +192,7 @@ class MediaWatcher:
                 break
         if session is None and not self.spotify_only:
             session = manager.get_current_session()
+        self._session = session
         if session is None:
             return MediaState(False)
 

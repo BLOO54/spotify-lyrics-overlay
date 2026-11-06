@@ -540,6 +540,8 @@ class OverlayWindow(QWidget):
                 self.word_mode_label = "line sync"
         else:
             self.word_mode_label = ""
+        if lyrics and lyrics.source == "my file" and self.word_mode_label:
+            self.word_mode_label = "your timing · " + self.word_mode_label
         self.extras = None
         self.translation_pending = False
         self.apply_settings()         # the height depends on how long this song's lines are

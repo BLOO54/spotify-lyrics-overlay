@@ -123,6 +123,23 @@ def self_test(report_path: str | None) -> int:
     return 0 if ok else 1
 
 
+def _schedule_tap_test(app, ctl, picture):
+    """CI check of the tap-along window using real keyboard events."""
+    from PySide6.QtCore import QEvent, Qt, QTimer
+    from PySide6.QtGui import QKeyEvent
+
+    def key(k):
+        d = ctl.tap_dlg
+        if d is not None:
+            app.sendEvent(d, QKeyEvent(QEvent.Type.KeyPress, k, Qt.KeyboardModifier.NoModifier))
+
+    QTimer.singleShot(1500, ctl.open_tap_sync)
+    for i, ms in enumerate((2200, 2900, 3600)):
+        QTimer.singleShot(ms, lambda: key(Qt.Key.Key_Space))
+    QTimer.singleShot(4000, lambda: ctl.tap_dlg and ctl.tap_dlg.grab().save(picture))
+    QTimer.singleShot(4300, lambda: key(Qt.Key.Key_Return))
+
+
 def _make_backdrop(app):
     """A full-screen window of bold stripes, so a screen grab can show whether glass blurs it."""
     from PySide6.QtCore import QPointF, Qt
@@ -160,6 +177,7 @@ def main() -> int:
     parser.add_argument("--quit-after", type=float, default=0)
     parser.add_argument("--screen-grab", help="CI: photograph the real screen under the overlay")
     parser.add_argument("--test-backdrop", action="store_true", help="CI: bright stripes behind the overlay")
+    parser.add_argument("--test-tap", help="CI: open the sync window, tap with real key presses, save; picture to FILE")
     args, _ = parser.parse_known_args()
 
     log_file = setup_logging()
@@ -217,6 +235,8 @@ def main() -> int:
                 log.info("Screen grab saved=%s frosted_active=%s", shot.save(args.screen_grab),
                          ctl.overlay._frosted_active)
         QTimer.singleShot(int(max(1.0, args.quit_after - 0.5) * 1000), snap)
+    if args.test_tap:
+        _schedule_tap_test(app, ctl, args.test_tap)
     if args.quit_after:
         QTimer.singleShot(int(args.quit_after * 1000), ctl.quit)
 

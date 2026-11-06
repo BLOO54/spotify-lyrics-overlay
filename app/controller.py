@@ -24,6 +24,7 @@ from .lrc import build_lyrics
 from .lyrics_provider import LrclibClient, LyricsNetworkError
 from .media_session import MediaState, MediaWatcher
 from .song_sync import SongSync
+from .my_lyrics import MyLyrics, lines_for_tapping
 from . import hotkeys, updater
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
@@ -99,6 +100,8 @@ class Controller(QObject):
         self._update_busy = False
         self._announced_version = None
         self.song_sync = SongSync(app_data_dir() / "song_sync.json")
+        self.my_lyrics = MyLyrics(app_data_dir() / "my_lyrics")
+        self.tap_dlg = None
         self._song_offset_ms = 0
         self._version_busy = False
 
@@ -173,6 +176,10 @@ class Controller(QObject):
         act_reset.triggered.connect(lambda: self.nudge_offset(None))
         act_version = QAction("Try another lyrics version", self.menu)
         act_version.triggered.connect(self.try_other_version)
+        act_tap = QAction("Sync this song myself…", self.menu)
+        act_tap.triggered.connect(self.open_tap_sync)
+        act_folder = QAction("Open my lyrics folder", self.menu)
+        act_folder.triggered.connect(self.open_lyrics_folder)
         act_refetch = QAction("Reload lyrics", self.menu)
         act_refetch.triggered.connect(self.refetch)
         self.act_update = QAction("Update available", self.menu)
@@ -192,7 +199,7 @@ class Controller(QObject):
         for a in (self.act_show, self.act_click, act_settings):
             self.menu.addAction(a)
         self.menu.addSeparator()
-        for a in (act_earlier, act_later, act_reset, act_version, act_refetch):
+        for a in (act_earlier, act_later, act_reset, act_version, act_tap, act_folder, act_refetch):
             self.menu.addAction(a)
         self.menu.addSeparator()
         self.menu.addAction(self.act_update)
@@ -374,10 +381,49 @@ class Controller(QObject):
             self.settings_dlg.capture_finished.connect(self._hotkeys_changed)
             self.settings_dlg.check_updates_requested.connect(lambda: self.check_updates(silent=False))
             self.settings_dlg.update_requested.connect(self.start_update)
+            self.settings_dlg.tap_sync_requested.connect(self.open_tap_sync)
+            self.settings_dlg.lyrics_folder_requested.connect(self.open_lyrics_folder)
             self._show_update_status()
         self.settings_dlg.show()
         self.settings_dlg.raise_()
         self.settings_dlg.activateWindow()
+
+    # ------------------------------------------------------------ your own lyrics
+    def open_lyrics_folder(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.my_lyrics.folder)))
+
+    def open_tap_sync(self):
+        st = self.track
+        if not (st and st.title):
+            self.tray.showMessage(APP_NAME, "Play the song you want to sync first.",
+                                  QSystemTrayIcon.MessageIcon.Information, 3000)
+            return
+        res = self._last_result
+        lines = lines_for_tapping(res.synced if res else None, res.plain if res else None)
+        if not lines:
+            self.tray.showMessage(APP_NAME, "There are no lyrics to sync for this song. You can put your own "
+                                  "file in the lyrics folder (tray → Open my lyrics folder).",
+                                  QSystemTrayIcon.MessageIcon.Information, 6000)
+            return
+        from .tap_sync import TapSyncDialog
+        restart = (lambda: self.watcher.request("restart")) if not self.demo else None
+        self.tap_dlg = TapSyncDialog(st.title, st.artist, lines, self.clock.position, restart, st.duration)
+        title, artist = st.title, st.artist
+        self.tap_dlg.saved.connect(lambda text: self._tap_saved(title, artist, text))
+        self.tap_dlg.show()
+        self.tap_dlg.raise_()
+        self.tap_dlg.activateWindow()
+
+    def _tap_saved(self, title: str, artist: str, text: str):
+        path = self.my_lyrics.save(title, artist, text)
+        log.info("Saved your timing to %s", path)
+        # your taps are the real timing, so any earlier/later adjustment for this song is no longer needed
+        self.song_sync.set(title, artist, 0)
+        if self.track and self.track.title == title:
+            self._song_offset_ms = 0
+            self._fetch(self.track)
+        self.tray.showMessage(APP_NAME, f"Saved your timing for {title}. It's used from now on.",
+                              QSystemTrayIcon.MessageIcon.Information, 4000)
 
     # ------------------------------------------------------------ updates
     def check_updates(self, silent: bool = True):
@@ -576,9 +622,12 @@ class Controller(QObject):
 
         def work():
             try:
+                from .lyrics_provider import LyricsResult
+                mine = self.my_lyrics.read(title, artist)       # your own file always wins
+                if mine:
+                    return LyricsResult(mine, None, False, "my file")
                 if self.demo:
                     from .demo import demo_lyrics
-                    from .lyrics_provider import LyricsResult
                     return LyricsResult(demo_lyrics(self.demo_song), None, False, "demo")
                 return self.client.fetch(title, artist, album, dur)
             except Exception as e:  # handed back to UI thread
