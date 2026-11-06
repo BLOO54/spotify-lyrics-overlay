@@ -132,9 +132,10 @@ In every mode the overlay stays fully on screen. With **Album art position → A
 the cover sits small next to the song title when the overlay is narrow, and big on the left when it's wide.
 
 ### ✨ Frosted glass and album colours
-* **Background style → Frosted glass** blurs whatever is behind the overlay (your game), like the Windows Start
+* **Background style → Frosted glass** *(experimental)* blurs whatever is behind the overlay (your game), like the Windows Start
   menu. It needs *Transparency effects* turned on in Windows Settings → Personalization → Colors; if it's off,
-  the normal background is used instead.
+  the normal background is used instead. On PCs without a graphics card (or over Remote Desktop) Windows
+  shows it as a plain dark panel - switch back to **Solid** if that happens.
 * **Match the album art** picks the highlight colours and/or a dark background tint from the current album
   cover, and **fades smoothly** to the new colours when the song changes.
 * **Corner rounding** sets how round the corners are (0 = square).

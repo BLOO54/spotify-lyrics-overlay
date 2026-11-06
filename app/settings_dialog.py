@@ -46,7 +46,7 @@ TRANSLATION_LAYOUTS = [("big", "Translation big (karaoke), original small undern
 WORD_TIMING_CHOICES = [("syllables", "Smart – by syllables (recommended)"),
                        ("letters", "Simple – by number of letters")]
 BG_STYLES = [("solid", "Solid (see-through colour)"),
-             ("frosted", "Frosted glass (blurs what's behind)")]
+             ("frosted", "Frosted glass – experimental (blurs what's behind)")]
 PROVIDERS = [("mymemory", "MyMemory – free, no account needed"),
              ("deepl", "DeepL – better quality, needs a free API key")]
 
