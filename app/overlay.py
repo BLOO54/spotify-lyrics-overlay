@@ -149,10 +149,10 @@ class OverlayWindow(QWidget):
             white = QColor(255, 255, 255)
             white.setAlphaF(alpha)
             return _with_alpha(white, 0.42 * alpha), white, white, white, _with_alpha(hi1, 0.8 * alpha), 0.25
-        if d == "spotify":      # dark upcoming words on the coloured card, sung words turn white
+        if d == "spotify":      # dim upcoming words on the coloured card, sung words turn bright white
             white = QColor(255, 255, 255)
             white.setAlphaF(alpha)
-            return QColor.fromRgbF(0, 0, 0, 0.55 * alpha), white, white, white, None, 0.0
+            return _with_alpha(white, 0.48 * alpha), white, white, white, None, 0.35
         sung = _mix(text, hi1, 0.45) if self.s.keep_sung_colored else text
         return _with_alpha(text, 0.9 * alpha), hi1, hi2, sung, hi1, 1.0
 
@@ -161,7 +161,7 @@ class OverlayWindow(QWidget):
         text = self._c("text_color")
         d = self.design
         if d == "spotify":
-            return _qc("#FFFFFF", 0.62 * alpha) if which == "prev" else QColor.fromRgbF(0, 0, 0, 0.5 * alpha)
+            return _qc("#FFFFFF", (0.42 if which == "prev" else 0.55) * alpha)
         if d == "aurora":
             return _qc("#FFFFFF", (0.30 if which == "prev" else 0.40) * alpha)
         return _qc(text, (0.38 if which == "prev" else 0.5) * alpha)
@@ -693,7 +693,7 @@ class OverlayWindow(QWidget):
             yield r, placed
 
     def _outline_factor(self) -> float:
-        return {"aurora": 0.25, "spotify": 0.0}.get(self.design, 1.0)
+        return {"aurora": 0.25, "spotify": 0.35}.get(self.design, 1.0)
 
     def _paint_simple_line(self, p, f: QFont, text: str, cy: float, color: QColor, area, max_rows: int = 1,
                            soft: bool = False):
