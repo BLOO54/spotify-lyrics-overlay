@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.13.1.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.14.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.13.1.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -172,6 +172,24 @@ If a song's lyrics are out of time and no other version fits:
 You can also put your own `.lrc` files in the lyrics folder (tray → **Open my lyrics folder**), named
 `Artist - Title.lrc`, e.g. `Jamie Paige - birdbrain.lrc`. Your files always win over the lyrics website.
 
+### 🤖 AI sync (optional)
+Lets the app *hear* when each line is sung, so the lyrics follow the singer closely - even for songs that only
+have unsynced lyrics online.
+1. Settings → **Lyrics & translation** → **AI sync** → pick **Light** (about 0.5 GB, faster) or **Best**
+   (about 1.5 GB, more accurate) → **Download model**. It turns itself on when the download finishes.
+2. Play songs normally. The first time a song plays (nearly) to the end, the AI listens to it and works out the
+   timing at low priority (about a minute; games get the CPU first). A pop-up says when it's done, and from then
+   on that song uses the AI timing.
+3. Lines it couldn't hear clearly keep the normal timing, moved by however far off the lines around them were.
+
+- The sound is held in memory only - never saved to disk or uploaded. Each song's timing is a tiny `.lrc` file
+  in `%APPDATA%\SpotifyLyricsOverlay\ai_lyrics`.
+- Your own synced files (the tap-along tool) always come first; the earlier / later shortcuts still work.
+- Tray → **AI sync: listen to this song again** redoes a song. **Remove model** gives the disk space back.
+- It listens to everything your PC plays, so loud game sound or voice chat at the same time can make it less
+  accurate. It uses the speech-recognition model Whisper (by OpenAI) through `faster-whisper`, running entirely
+  on your PC; the model is downloaded once from Hugging Face.
+
 ### 🌍 Translation and romaji
 Turn on **"Translate songs that aren't in my language"** in *Lyrics & translation* and pick your language.
 The app detects the song's language and only translates songs that aren't already in yours.
@@ -223,6 +241,8 @@ Your settings stay in `%APPDATA%\SpotifyLyricsOverlay`; delete that folder to re
 - Internet requests go to `lrclib.net` (song title, artist, album and length, identified with an app User-Agent as LRCLIB asks)
   and, **only if you turn translation on**, the lyric lines go to MyMemory or DeepL to be translated.
 - Lyrics are cached on your PC so each song is only downloaded once.
+- **AI sync** (off unless you turn it on) listens to your PC's sound while a song plays and keeps it in memory
+  only; it is processed on your PC and never saved or sent anywhere. The model download comes from Hugging Face.
 - Nothing is injected into games or Spotify; the overlay is a normal (transparent) window.
 
 ---

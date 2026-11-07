@@ -102,6 +102,22 @@ def self_test(report_path: str | None) -> int:
     except Exception as e:
         add(False, f"Translation check failed: {e}")
 
+    try:
+        from app.ai_sync import ModelStore, runtime_available
+        why = runtime_available()
+        add(why is None, "AI sync parts included" if why is None else f"AI sync: {why}")
+        store = ModelStore()
+        have = [n for n in ("light", "best") if store.installed(n)]
+        lines.append("• AI sync model: " + (", ".join(have) if have else "not downloaded (optional)"))
+        try:
+            import soundcard as sc
+            sp = sc.default_speaker()
+            lines.append(f"✔ Sound output found for AI sync: {sp.name}")
+        except Exception as e:
+            lines.append(f"• No sound output to listen to right now ({e})")
+    except Exception as e:
+        add(False, f"AI sync check failed: {e}")
+
     lines.append("")
     lines.append("RESULT: " + ("all checks passed" if ok else "some checks failed"))
     text = "\n".join(lines)
@@ -182,10 +198,21 @@ def main() -> int:
     parser.add_argument("--test-tap", help="CI: open the sync window, tap with real key presses, save; picture to FILE")
     parser.add_argument("--ui-shot", nargs=2, metavar=("WHAT", "FILE"),
                         help="CI: picture of a window - WHAT is 'settings' or 'toast'")
+    parser.add_argument("--ai-test", nargs=4, metavar=("MODEL", "WAV", "LRC", "OUT"),
+                        help="CI: run AI sync on a recording and write a report")
+    parser.add_argument("--ai-store", help="CI: folder for the AI model")
+    parser.add_argument("--listen-test", help="CI: try recording the PC's sound, report to FILE")
     args, _ = parser.parse_known_args()
 
     log_file = setup_logging()
     log = logging.getLogger("main")
+
+    if args.ai_test:
+        from app.ai_sync import cli_test
+        return cli_test(*args.ai_test, store_dir=args.ai_store)
+    if args.listen_test:
+        from app.ai_sync import listen_test
+        return listen_test(args.listen_test)
 
     if args.self_test:
         return self_test(args.report)

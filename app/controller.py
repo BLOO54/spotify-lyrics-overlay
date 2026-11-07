@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from .lrc import build_lyrics
 from .lyrics_provider import LrclibClient, LyricsNetworkError
 from .media_session import MediaState, MediaWatcher
 from .song_sync import SongSync
+from . import ai_sync
+from .lrc import parse_lrc
 from .my_lyrics import MyLyrics, lines_for_tapping
 from . import hotkeys, updater
 from .overlay import OverlayWindow
@@ -58,6 +61,9 @@ class _Bridge(QObject):
     versions = Signal(int, object)
     update_checked = Signal(object, bool)     # result, silent
     update_downloaded = Signal(object)
+    ai_done = Signal(object, object)          # job, (lrc, result, message) or an error
+    ai_progress = Signal(object, object)      # done bytes, total bytes
+    ai_downloaded = Signal(object, object)    # model name, error or None
 
 
 class HotkeyFilter(QAbstractNativeEventFilter):
@@ -97,11 +103,27 @@ class Controller(QObject):
         self.bridge.versions.connect(self._on_versions)
         self.bridge.update_checked.connect(self._on_update_checked)
         self.bridge.update_downloaded.connect(self._on_update_downloaded)
+        self.bridge.ai_done.connect(self._on_ai_done)
+        self.bridge.ai_progress.connect(self._on_ai_progress)
+        self.bridge.ai_downloaded.connect(self._on_ai_downloaded)
         self.update_info = None
         self._update_busy = False
         self._announced_version = None
         self.song_sync = SongSync(app_data_dir() / "song_sync.json")
         self.my_lyrics = MyLyrics(app_data_dir() / "my_lyrics")
+        # AI sync (optional): timing learned by listening, kept apart from your own files
+        self.ai_lyrics = MyLyrics(app_data_dir() / "ai_lyrics", readme_text=(
+            "Lyrics timed by AI sync (one small .lrc file per song). Delete a file to let the\n"
+            "app listen to that song again. Your own files in \"my_lyrics\" always come first.\n"))
+        self.song_sync_ai = SongSync(app_data_dir() / "song_sync_ai.json")
+        self.ai_store = ai_sync.ModelStore()
+        self.ai_listener = None
+        self.ai_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai")
+        self._ai_ctx = None
+        self._ai_jobs = 0
+        self._ai_download = None        # (model name, cancel event) while downloading
+        self._ai_dl_text = ""
+        self._ai_prev = (self.s.ai_sync_enabled, self.s.ai_model)
         self.tap_dlg = None
         self._song_offset_ms = 0
         self._version_busy = False
@@ -130,6 +152,9 @@ class Controller(QObject):
         self.top_timer = QTimer(self)
         self.top_timer.timeout.connect(self.overlay.keep_on_top)
         self.top_timer.start(TOPMOST_MS)
+        self.ai_timer = QTimer(self)
+        self.ai_timer.timeout.connect(self._ai_check)
+        self.ai_timer.start(2000)
 
         self.hotkey_filter = None
         self._registered = set()
@@ -179,6 +204,8 @@ class Controller(QObject):
         act_version.triggered.connect(self.try_other_version)
         act_tap = QAction("Sync this song myself…", self.menu)
         act_tap.triggered.connect(self.open_tap_sync)
+        self.act_ai_redo = QAction("AI sync: listen to this song again", self.menu)
+        self.act_ai_redo.triggered.connect(self.ai_redo_song)
         act_folder = QAction("Open my lyrics folder", self.menu)
         act_folder.triggered.connect(self.open_lyrics_folder)
         act_refetch = QAction("Reload lyrics", self.menu)
@@ -200,7 +227,7 @@ class Controller(QObject):
         for a in (self.act_show, self.act_click, act_settings):
             self.menu.addAction(a)
         self.menu.addSeparator()
-        for a in (act_earlier, act_later, act_reset, act_version, act_tap, act_folder, act_refetch):
+        for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
             self.menu.addAction(a)
         self.menu.addSeparator()
         self.menu.addAction(self.act_update)
@@ -328,8 +355,9 @@ class Controller(QObject):
             return
         title, artist = self.track.title, self.track.artist
         new = 0 if delta_ms is None else self._song_offset_ms + delta_ms
-        self.song_sync.set(title, artist, new)
-        self._song_offset_ms = self.song_sync.get(title, artist)
+        store = self._sync_store()
+        store.set(title, artist, new)
+        self._song_offset_ms = store.get(title, artist)
         ms = self._song_offset_ms
         what = "back to normal" if ms == 0 else (f"{abs(ms) / 1000:.2f} s {'earlier' if ms > 0 else 'later'}")
         self.notify(f"{title}: lyrics {what} (remembered for this song)", "info", 1800)
@@ -370,9 +398,12 @@ class Controller(QObject):
         chosen = result[nxt]
         st = self.track
         self.client.remember_choice(st.title, st.artist, st.duration, chosen)
+        self.ai_lyrics.forget(st.title, st.artist)      # AI timing was for the old version
         self._last_result = chosen
+        self._song_offset_ms = self._sync_store().get(st.title, st.artist)
         self._extras, self._extras_key = None, None
         self._show_result(chosen)
+        self._ai_arm(chosen)
         self.notify(f"Lyrics version {nxt + 1} of {len(result)} (remembered for this song)", "info", 2500)
 
     def open_settings(self):
@@ -387,6 +418,10 @@ class Controller(QObject):
             self.settings_dlg.tap_sync_requested.connect(self.open_tap_sync)
             self.settings_dlg.lyrics_folder_requested.connect(self.open_lyrics_folder)
             self.settings_dlg.set_preview_source(self.overlay.grab)
+            self.settings_dlg.ai_download_requested.connect(self.ai_download)
+            self.settings_dlg.ai_remove_requested.connect(self.ai_remove)
+            self.settings_dlg.ai_cancel_requested.connect(self.ai_cancel_download)
+            self.settings_dlg.ai_status_wanted.connect(self._refresh_ai_status)
             self._show_update_status()
         self.settings_dlg.show()
         self.settings_dlg.raise_()
@@ -576,6 +611,12 @@ class Controller(QObject):
         self._apply_visibility()
         if self.settings_dlg and self.s.fixed_height != before:
             self.settings_dlg.refresh()          # show the height that was just frozen
+        ai_now = (self.s.ai_sync_enabled, self.s.ai_model)
+        if ai_now != self._ai_prev:
+            self._ai_prev = ai_now
+            if self.track and self.track.title and self.track.artist:
+                self._fetch(self.track)          # AI-timed lyrics on / off for this song too
+            self._refresh_ai_status()
 
     def _on_dragged(self, x, y):
         self.s.position = "custom"
@@ -595,6 +636,11 @@ class Controller(QObject):
     def quit(self):
         try:
             self.unregister_hotkeys()
+            if self.ai_listener is not None:
+                self.ai_listener.stop()
+            if self._ai_download:
+                self._ai_download[1].set()
+            self.ai_pool.shutdown(wait=False, cancel_futures=True)
             if self.demo:
                 self.demo_player.stop()
             else:
@@ -627,6 +673,7 @@ class Controller(QObject):
         self.overlay.playing = st.playing
         self.overlay.duration = st.duration
         if st.track_key != self.track_key:
+            self._ai_finish()
             self.track_key = st.track_key
             self.track = st
             self._last_result = None
@@ -654,6 +701,7 @@ class Controller(QObject):
         self.fetch_token += 1
         token = self.fetch_token
         title, artist, album, dur = st.title, st.artist, st.album, st.duration
+        ai_on = self.s.ai_sync_enabled
 
         def work():
             try:
@@ -661,6 +709,10 @@ class Controller(QObject):
                 mine = self.my_lyrics.read(title, artist)       # your own file always wins
                 if mine:
                     return LyricsResult(mine, None, False, "my file")
+                if ai_on:
+                    heard = self.ai_lyrics.read(title, artist)  # then timing the AI learned
+                    if heard:
+                        return LyricsResult(heard, None, False, "AI sync")
                 if self.demo:
                     from .demo import demo_lyrics
                     return LyricsResult(demo_lyrics(self.demo_song), None, False, "demo")
@@ -685,7 +737,10 @@ class Controller(QObject):
             self.overlay.set_lyrics(None, "Something went wrong loading lyrics")
             return
         self._last_result = result
+        if self.track:
+            self._song_offset_ms = self._sync_store().get(self.track.title, self.track.artist)
         self._show_result(result)
+        self._ai_arm(result)
 
     def _show_result(self, result):
         if result.instrumental:
@@ -702,6 +757,204 @@ class Controller(QObject):
             self.overlay.set_lyrics(None, "Only unsynced lyrics exist for this song")
         else:
             self.overlay.set_lyrics(None, "No lyrics found for this song")
+
+    # ------------------------------------------------------------ AI sync
+    def _sync_store(self):
+        """Per-song adjustments are kept separately for AI-timed lyrics."""
+        r = self._last_result
+        return self.song_sync_ai if (r is not None and r.source == "AI sync") else self.song_sync
+
+    def ai_status(self) -> str:
+        why = ai_sync.runtime_available()
+        if why:
+            return f"Not available: {why}"
+        if self._ai_download:
+            return self._ai_dl_text or "Downloading…"
+        name = self.s.ai_model
+        label, size = ai_sync.MODELS[name][1], ai_sync.MODELS[name][2]
+        if not self.ai_store.installed(name):
+            return f"{label} model not downloaded yet ({size})."
+        mb = self.ai_store.size_on_disk(name) / 1e6
+        bits = [f"{label} model installed ({mb:,.0f} MB)."]
+        if not self.s.ai_sync_enabled:
+            bits.append("Turn on \"Use AI sync\" to start.")
+        elif self.ai_listener is not None and self.ai_listener.error:
+            bits.append(f"Problem: {self.ai_listener.error}")
+        elif self._ai_jobs:
+            bits.append("Working out the timing of a song…")
+        elif self.ai_listener is not None and self.ai_listener.peek() is not None:
+            rec = self.ai_listener.peek()
+            bits.append(f"Listening to this song ({rec.covered():.0f} s heard).")
+        try:
+            done = len(list(self.ai_lyrics.folder.glob("*.lrc")))
+            bits.append(f"{done} song{'s' if done != 1 else ''} synced so far.")
+        except OSError:
+            pass
+        return " ".join(bits)
+
+    def _ai_ready(self) -> bool:
+        return (self.s.ai_sync_enabled and not self.demo and ai_sync.runtime_available() is None
+                and self.ai_store.installed(self.s.ai_model))
+
+    def _ai_state(self):
+        return self.track_key, self.clock.position(), self.clock.playing
+
+    def _ai_arm(self, result):
+        """Lyrics are on screen: start listening, if AI sync should time this song."""
+        self._ai_ctx = None
+        if self.ai_listener is not None:
+            self.ai_listener.take()
+        if not self._ai_ready() or not self.track or result.instrumental:
+            return
+        if result.source in ("my file", "AI sync", "demo"):
+            return
+        if result.synced:
+            parsed = parse_lrc(result.synced)
+            lines, orig = [ln.text for ln in parsed], [ln.start for ln in parsed]
+        elif result.plain:
+            lines, orig = lines_for_tapping(None, result.plain), None
+        else:
+            return
+        if sum(1 for ln in lines if ln.strip()) < 3:
+            return
+        self._ai_ctx = (self.track_key, self.track.title, self.track.artist, lines, orig)
+        if self.ai_listener is None:
+            self.ai_listener = ai_sync.Listener(self._ai_state)
+        self.ai_listener.arm(self.track_key, self.track.duration or 0.0)
+        log.info("AI sync: listening to %s - %s", self.track.artist, self.track.title)
+
+    def _ai_check(self):
+        """Every 2 s: once (almost) the whole song has been heard, start the AI."""
+        if self.ai_listener is None or self._ai_ctx is None:
+            return
+        rec = self.ai_listener.peek()
+        if rec is None or not rec.duration:
+            return
+        if rec.covered() >= 0.95 * rec.duration or self.clock.position() >= rec.duration - 1.5:
+            self._ai_finish()
+
+    def _ai_finish(self):
+        ctx, self._ai_ctx = self._ai_ctx, None
+        rec = self.ai_listener.take() if self.ai_listener is not None else None
+        if ctx is None or rec is None or rec.key != ctx[0]:
+            return
+        key, title, artist, lines, orig = ctx
+        heard = rec.covered()
+        need = (0.35 if orig else 0.8) * (rec.duration or 0)
+        if heard < max(need, 25.0):
+            log.info("AI sync: only %.0f s of %s heard - not enough, will listen next time", heard, title)
+            return
+        job = ai_sync.Job(key, title, artist, lines, orig, rec)
+        model_dir = self.ai_store.path(self.s.ai_model)
+        threads = self.s.ai_threads
+        self._ai_jobs += 1
+
+        def work():
+            win32.set_background_priority(True)
+            try:
+                return ai_sync.run_job(job, model_dir, threads)
+            except Exception as e:
+                log.exception("AI sync failed")
+                return e
+            finally:
+                win32.set_background_priority(False)
+
+        fut = self.ai_pool.submit(work)
+        fut.add_done_callback(lambda f: self.bridge.ai_done.emit(job, f.result()))
+
+    def _on_ai_done(self, job, out):
+        self._ai_jobs = max(0, self._ai_jobs - 1)
+        if isinstance(out, Exception):
+            self.notify(f"AI sync couldn't time “{job.title}” ({out}). The normal timing is still used.",
+                        "warning", 6000)
+            return
+        text, res, msg = out
+        if not text:
+            log.info("AI sync: %s - %s", job.title, msg)
+            self.notify(f"AI sync: “{job.title}” – {msg}.", "info", 5000)
+            return
+        self.ai_lyrics.save(job.title, job.artist, text)
+        self.notify(f"AI synced “{job.title}” ({msg}). It uses the new timing from now on.", "success", 5000)
+        if self.track and self.track.title == job.title and self.track.artist == job.artist:
+            self._fetch(self.track)        # same song still (or again) playing: switch now
+
+    def ai_redo_song(self):
+        if not (self.track and self.track.title):
+            self.notify("Play a song first.", "info", 2000)
+            return
+        if not self._ai_ready():
+            self.notify("Turn on AI sync and download a model first (Settings → Lyrics & translation).",
+                        "info", 5000)
+            return
+        self.ai_lyrics.forget(self.track.title, self.track.artist)
+        self.notify(f"AI sync will listen to “{self.track.title}” again – let it play to the end.", "info", 4000)
+        self._fetch(self.track)
+
+    def ai_download(self, name: str):
+        if self._ai_download:
+            return
+        cancel = threading.Event()
+        self._ai_download = (name, cancel)
+        self._ai_dl_text = "Starting download…"
+        self._refresh_ai_status()
+
+        def progress(done, total):
+            self.bridge.ai_progress.emit(done, total)
+
+        def work():
+            try:
+                self.ai_store.download(name, progress, cancel)
+                return None
+            except Exception as e:
+                log.warning("AI model download failed: %r", e)
+                return e
+
+        fut = self.pool.submit(work)
+        fut.add_done_callback(lambda f: self.bridge.ai_downloaded.emit(name, f.result()))
+
+    def ai_cancel_download(self):
+        if self._ai_download:
+            self._ai_download[1].set()
+
+    def _on_ai_progress(self, done, total):
+        pct = int(100 * done / total) if total else 0
+        self._ai_dl_text = f"Downloading… {done / 1e6:,.0f} of {total / 1e6:,.0f} MB ({pct}%)"
+        if self.settings_dlg is not None:
+            self.settings_dlg.set_ai_status(self._ai_dl_text, busy=True, progress=pct)
+
+    def _on_ai_downloaded(self, name, err):
+        self._ai_download = None
+        self._ai_dl_text = ""
+        if err is None:
+            if not self.s.ai_sync_enabled:
+                self.s.ai_sync_enabled = True
+                self.s.save()
+                if self.settings_dlg is not None:
+                    self.settings_dlg.sync_from_settings()
+            self.notify("AI sync is ready. It learns each song the first time it plays to the end.",
+                        "success", 6000)
+        elif isinstance(err, InterruptedError):
+            self.ai_store.remove(name)
+        else:
+            self.notify(f"AI model download failed: {err}", "warning", 7000)
+        self._refresh_ai_status()
+
+    def ai_remove(self, name: str):
+        if self._ai_download and self._ai_download[0] == name:
+            self.ai_cancel_download()
+            return
+        if self.ai_listener is not None:
+            self.ai_listener.take()
+        self._ai_ctx = None
+        self.ai_store.remove(name)
+        self.notify(f"{ai_sync.MODELS[name][1]} AI model removed. Songs it already synced keep their timing.",
+                    "info", 5000)
+        self._refresh_ai_status()
+
+    def _refresh_ai_status(self):
+        if self.settings_dlg is not None:
+            self.settings_dlg.set_ai_status(self.ai_status(), busy=bool(self._ai_download),
+                                            installed=self.ai_store.installed(self.s.ai_model))
 
     # ------------------------------------------------------------ translation / romaji
     def _extras_settings(self):

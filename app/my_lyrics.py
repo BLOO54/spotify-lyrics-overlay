@@ -33,19 +33,29 @@ def safe_name(artist: str, title: str) -> str:
 
 
 class MyLyrics:
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, readme_text: str | None = None):
         self.folder = folder
         folder.mkdir(parents=True, exist_ok=True)
         readme = folder / "README.txt"
         if not readme.exists():
             try:
-                readme.write_text(
+                readme.write_text(readme_text or (
                     "Put your own synced lyrics here as .lrc files named \"Artist - Title.lrc\"\n"
                     "(for example: \"Jamie Paige - birdbrain.lrc\"). They are used instead of the\n"
                     "lyrics website for that song. \"Sync this song myself\" in the tray menu makes\n"
-                    "these files for you.\n", encoding="utf-8")
+                    "these files for you.\n"), encoding="utf-8")
             except OSError:
                 pass
+
+    def forget(self, title: str, artist: str) -> bool:
+        f = self.find(title, artist)
+        if f is None:
+            return False
+        try:
+            f.unlink()
+            return True
+        except OSError:
+            return False
 
     def find(self, title: str, artist: str) -> Path | None:
         want_full = _norm(f"{artist}{title}")

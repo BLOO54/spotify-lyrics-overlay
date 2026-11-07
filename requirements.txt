@@ -10,3 +10,10 @@ winrt-Windows.Storage.Streams>=2.0; sys_platform == "win32"
 
 # Japanese pronunciation (romaji), works offline
 pykakasi>=2.2
+
+# AI sync (optional feature): speech recognition that runs on your own PC, and
+# listening to what the PC plays (WASAPI loopback). The AI model itself is only
+# downloaded if you turn the feature on.
+faster-whisper>=1.0
+soundcard>=0.4.3; sys_platform == "win32"
+numpy>=1.24

@@ -6,7 +6,8 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QFontComboBox,
                                QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
+                               QListWidgetItem, QProgressBar, QPushButton, QScrollArea, QSlider, QSpinBox,
+                               QStackedWidget,
                                QVBoxLayout, QWidget)
 
 from . import APP_NAME, APP_VERSION, hotkeys
@@ -15,6 +16,8 @@ from .themes import CUSTOM, HIGHLIGHT_STYLES, THEME_KEYS, THEMES, apply_theme
 from .translate import LANGUAGES, romaji_available
 
 # One design language for every window: deep charcoal, soft cards, violet accent.
+from .ai_sync import MODELS as AI_MODELS
+
 STYLE = """
 QDialog, QWidget#page, QScrollArea, QScrollArea > QWidget > QWidget { background: #0f0f15; color: #ececf3; }
 QWidget { font-family: "Segoe UI Variable Text", "Segoe UI"; font-size: 13px; }
@@ -48,6 +51,10 @@ QListWidget#nav { background: transparent; border: none; outline: 0; color: #b8b
 QListWidget#nav::item { padding: 10px 14px; margin: 2px 8px; border-radius: 10px; }
 QListWidget#nav::item:hover { background: #1c1c26; color: #fff; }
 QListWidget#nav::item:selected { background: #241b3d; color: #fff; }
+QProgressBar { background: #1b1b24; border: 1px solid #2a2a36; border-radius: 6px; height: 10px;
+               text-align: center; color: transparent; }
+QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c3aed, stop:1 #a78bfa);
+                      border-radius: 5px; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; border: none; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QScrollBar::handle:vertical { background: #2e2e3c; border-radius: 4px; min-height: 30px; }
@@ -197,6 +204,10 @@ class SettingsDialog(QDialog):
     tap_sync_requested = Signal()
     lyrics_folder_requested = Signal()
     update_requested = Signal()
+    ai_download_requested = Signal(str)
+    ai_remove_requested = Signal(str)
+    ai_cancel_requested = Signal()
+    ai_status_wanted = Signal()
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -321,6 +332,7 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, e):
         super().showEvent(e)
+        self.ai_status_wanted.emit()
         try:
             from . import win32
             win32.set_dark_titlebar(int(self.winId()))
@@ -528,6 +540,55 @@ class SettingsDialog(QDialog):
         holder.setLayout(row)
         f.addRow(holder)
 
+        sep = QLabel("<b>AI sync (optional)</b>")
+        sep.setObjectName("section")
+        f.addRow(sep)
+        f.addRow(_hint("Listens to each song once, hears when every line is sung and remembers it – "
+                       "from the next play on, the lyrics follow the singer closely. Works for songs with "
+                       "only unsynced lyrics too. The sound is kept in memory only and never saved or "
+                       "uploaded; each song's timing is a tiny file. Your own synced files always come first."))
+        self._w["ai_sync_enabled"] = self._check("Use AI sync", "ai_sync_enabled")
+        f.addRow(self._w["ai_sync_enabled"])
+        self._w["ai_model"] = am = QComboBox()
+        for key in ("light", "best"):
+            _, label, size = AI_MODELS[key]
+            am.addItem(f"{label} – {size}" + (" (faster)" if key == "light" else " (more accurate, slower)"), key)
+        am.setCurrentIndex(max(0, am.findData(self.s.ai_model)))
+        am.currentIndexChanged.connect(lambda i: (self._set("ai_model", am.itemData(i)),
+                                                  self.ai_status_wanted.emit()))
+        f.addRow("Model", am)
+        self._w["ai_threads"] = at = QComboBox()
+        for n, label in ((1, "Very gentle – 1 core"), (2, "Gentle – 2 cores (recommended while gaming)"),
+                         (4, "Faster – 4 cores"), (8, "Fastest – 8 cores")):
+            at.addItem(label, n)
+        at.setCurrentIndex(max(0, at.findData(self.s.ai_threads)))
+        at.currentIndexChanged.connect(lambda i: self._set("ai_threads", at.itemData(i)))
+        f.addRow("CPU use", at)
+        self.ai_status = QLabel("")
+        self.ai_status.setWordWrap(True)
+        self.ai_status.setStyleSheet("color:#c9c9d6;")
+        f.addRow(self.ai_status)
+        self.ai_bar = QProgressBar()
+        self.ai_bar.setRange(0, 100)
+        self.ai_bar.setVisible(False)
+        f.addRow(self.ai_bar)
+        arow = QHBoxLayout()
+        self.ai_get = QPushButton("Download model")
+        self.ai_get.setObjectName("primary")
+        self.ai_get.clicked.connect(lambda: self.ai_download_requested.emit(self.s.ai_model))
+        self.ai_del = QPushButton("Remove model")
+        self.ai_del.clicked.connect(self._ai_remove_or_cancel)
+        arow.addWidget(self.ai_get)
+        arow.addWidget(self.ai_del)
+        arow.addStretch(1)
+        aholder = QWidget()
+        aholder.setLayout(arow)
+        f.addRow(aholder)
+        f.addRow(_hint("Tip: the AI only starts once a song has played (nearly) to the end, and runs at low "
+                       "priority so games stay smooth. Tray menu → \"AI sync: listen to this song again\" "
+                       "redoes a song. Game sound playing at the same time can make it less accurate."))
+        self._ai_busy = False
+
         sep = QLabel("<b>Translation</b>")
         sep.setObjectName("section")
         f.addRow(sep)
@@ -619,6 +680,27 @@ class SettingsDialog(QDialog):
         f.addRow(_hint("Updating downloads the new version from your GitHub releases page, checks the file, "
                        "installs it quietly and restarts the overlay. Your settings are kept."))
         return w
+
+    def set_ai_status(self, text: str, busy: bool = False, installed: bool | None = None,
+                      progress: int | None = None):
+        self._ai_busy = busy
+        self.ai_status.setText(text)
+        self.ai_bar.setVisible(busy)
+        if progress is not None:
+            self.ai_bar.setValue(progress)
+        if installed is not None:
+            self.ai_get.setVisible(not installed and not busy)
+            self.ai_del.setVisible(installed or busy)
+        if busy:
+            self.ai_get.setVisible(False)
+            self.ai_del.setVisible(True)
+        self.ai_del.setText("Cancel download" if busy else "Remove model")
+
+    def _ai_remove_or_cancel(self):
+        if self._ai_busy:
+            self.ai_cancel_requested.emit()
+        else:
+            self.ai_remove_requested.emit(self.s.ai_model)
 
     def set_update_status(self, text: str, can_update: bool):
         self.update_label.setText(text)

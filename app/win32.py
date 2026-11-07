@@ -270,3 +270,14 @@ def set_dark_titlebar(hwnd: int) -> None:
                 break
     except Exception:
         log.exception("set_dark_titlebar failed")
+
+
+def set_background_priority(on: bool) -> None:
+    """While the AI works, give games the CPU first (Windows 'below normal' priority)."""
+    if not IS_WINDOWS:
+        return
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.SetPriorityClass(k32.GetCurrentProcess(), 0x4000 if on else 0x20)
+    except Exception:
+        pass

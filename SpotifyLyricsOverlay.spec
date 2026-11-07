@@ -20,6 +20,13 @@ try:
     hidden += collect_submodules("pykakasi")
 except Exception as e:
     print("pykakasi collection skipped:", e)
+for pkg in ("faster_whisper", "soundcard", "ctranslate2", "onnxruntime"):
+    try:                                         # AI sync: speech recognition + sound capture
+        datas += collect_data_files(pkg)
+        binaries += collect_dynamic_libs(pkg)
+        hidden += collect_submodules(pkg) if pkg in ("faster_whisper", "soundcard") else []
+    except Exception as e:
+        print(pkg, "collection skipped:", e)
 try:
     hidden += collect_submodules("winrt")
     binaries += collect_dynamic_libs("winrt")
@@ -32,7 +39,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hidden,
-    excludes=["tkinter", "unittest", "pytest",
+    excludes=["tkinter", "pytest", "torch", "tensorflow",
               "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml",
               "PySide6.QtQuick", "PySide6.QtMultimedia", "PySide6.Qt3DCore", "PySide6.QtCharts",
               "PySide6.QtDataVisualization", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],

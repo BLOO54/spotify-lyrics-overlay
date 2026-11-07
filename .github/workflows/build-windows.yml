@@ -147,6 +147,39 @@ jobs:
             if (-not (Test-Path "demo-overlay-ui-$what.png")) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 30; throw "no picture of $what" }
           }
 
+      - name: AI sync end-to-end test (downloads the Light model, hears a test song)
+        timeout-minutes: 25
+        run: |
+          $dir = "$env:RUNNER_TEMP\aitest"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Add-Type -AssemblyName System.Speech
+          $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+          $lines = python -c "import sys; sys.path.insert(0,'tools'); import make_ai_test_song as m; print(chr(10).join(m.LINES))"
+          $i = 0
+          foreach ($line in ($lines -split "`n")) {
+            if (-not $line.Trim()) { continue }
+            $voice.SetOutputToWaveFile("$dir\line$i.wav", $fmt); $voice.Speak($line.Trim()); $voice.SetOutputToNull(); $i++
+          }
+          python tools/make_ai_test_song.py $dir
+          Copy-Item "$dir\test.wav" ci-ai-test-song.wav
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $p = Start-Process $exe -ArgumentList "--ai-test","light","$dir\test.wav","$dir\truth.lrc","$PWD\ci-ai-report.json","--ai-store","$env:RUNNER_TEMP\aimodels" -PassThru
+          if (-not $p.WaitForExit(1200000)) { Stop-Process $p -Force; throw "AI test took too long" }
+          Get-Content ci-ai-report.json
+          Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 15
+          $r = Get-Content ci-ai-report.json -Raw | ConvertFrom-Json
+          if (-not $r.ok) { throw "AI sync test failed" }
+          "Download: $($r.download_s) s, $($r.size_mb) MB. Hearing the song: $($r.hear_s) s. Matched $($r.matched)/$($r.lines) lines, worst error $($r.max_error) s"
+
+      - name: Can the PC's sound be recorded (needs a sound device - info only)
+        continue-on-error: true
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $p = Start-Process $exe -ArgumentList "--listen-test","$PWD\ci-listen.json" -PassThru
+          $null = $p.WaitForExit(60000)
+          if (Test-Path ci-listen.json) { Get-Content ci-listen.json } else { "no report" }
+
       - name: Build installer (Inno Setup)
         run: |
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
@@ -220,6 +253,9 @@ jobs:
             ci-glass-info.txt
             ci-update-check.txt
             ci-tap-check.txt
+            ci-ai-report.json
+            ci-listen.json
+            ci-ai-test-song.wav
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false
           overwrite_files: true
