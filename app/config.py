@@ -48,6 +48,8 @@ class Settings:
     theme: str = "Neon"
     highlight_style: str = "wipe"        # see themes.HIGHLIGHT_STYLES
     keep_sung_colored: bool = True       # sung words stay tinted (False = back to white)
+    # Overall overlay design: "classic" | "aurora" | "hud" | "spotify"
+    design: str = "classic"
     # Window look
     background_color: str = "#0A0A12"
     background_opacity: float = 0.55     # 0 = fully clear, 1 = solid
@@ -93,7 +95,8 @@ class Settings:
     deepl_key: str = ""                  # your own DeepL API key (stored only on this PC)
     show_romaji: bool = False            # Japanese pronunciation in English letters
     first_run: bool = True
-    auto_update_check: bool = True       # look for new versions on GitHub (start-up + every few hours)
+    auto_update_check: bool = True
+    popup_style: str = "app"             # "app" = sleek sliding cards + dark menu | "windows" = standard Windows look       # look for new versions on GitHub (start-up + every few hours)
     # Keyboard shortcuts (empty = off). Change them in Settings → Shortcuts.
     hk_toggle: str = "Ctrl+Alt+L"
     hk_click: str = "Ctrl+Alt+K"
@@ -152,6 +155,10 @@ class Settings:
         self.sync_offset_ms = max(-10000, min(10000, int(self.sync_offset_ms)))
         if self.position not in POSITIONS:
             self.position = "bottom-center"
+        if self.popup_style not in ("app", "windows"):
+            self.popup_style = "app"
+        if self.design not in ("classic", "aurora", "hud", "spotify"):
+            self.design = "classic"
         if self.background_style not in ("solid", "frosted"):
             self.background_style = "solid"
         self.corner_radius = max(0, min(40, int(self.corner_radius)))

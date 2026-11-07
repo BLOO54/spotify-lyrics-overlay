@@ -180,6 +180,8 @@ def main() -> int:
     parser.add_argument("--screen-grab", help="CI: photograph the real screen under the overlay")
     parser.add_argument("--test-backdrop", action="store_true", help="CI: bright stripes behind the overlay")
     parser.add_argument("--test-tap", help="CI: open the sync window, tap with real key presses, save; picture to FILE")
+    parser.add_argument("--ui-shot", nargs=2, metavar=("WHAT", "FILE"),
+                        help="CI: picture of a window - WHAT is 'settings' or 'toast'")
     args, _ = parser.parse_known_args()
 
     log_file = setup_logging()
@@ -239,6 +241,18 @@ def main() -> int:
         QTimer.singleShot(int(max(1.0, args.quit_after - 0.5) * 1000), snap)
     if args.test_tap:
         _schedule_tap_test(app, ctl, args.test_tap)
+    if args.ui_shot:
+        what, file = args.ui_shot
+        if what == "settings":
+            QTimer.singleShot(1500, ctl.open_settings)
+            QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
+        elif what == "toast":
+            def pop():
+                ctl.s.popup_style = "app"
+                ctl.notify("Version 1.14.0 is available: AI sync for near-perfect timing.\nClick to update now.",
+                           "info", 8000, action="Update now")
+            QTimer.singleShot(1500, pop)
+            QTimer.singleShot(2600, lambda: ctl.toast.grab().save(file))
     if args.quit_after:
         QTimer.singleShot(int(args.quit_after * 1000), ctl.quit)
 

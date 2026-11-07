@@ -254,3 +254,19 @@ def set_rounded_shape(hwnd: int, width: int, height: int, radius: int) -> None:
         log.info("rounded shape r=%s: SetWindowRgn=%s DwmCorner=%s", radius, ok_rgn, hr)
     except Exception:
         log.exception("set_rounded_shape failed")
+
+
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+
+
+def set_dark_titlebar(hwnd: int) -> None:
+    """Give one of our normal windows (Settings, sync window) a dark Windows title bar."""
+    if not IS_WINDOWS or not hwnd or dwmapi is None:
+        return
+    try:
+        on = ctypes.c_int(1)
+        for attr in (DWMWA_USE_IMMERSIVE_DARK_MODE, 19):      # 19 = older Windows 10 builds
+            if dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+                break
+    except Exception:
+        log.exception("set_dark_titlebar failed")

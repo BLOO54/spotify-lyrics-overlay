@@ -12,9 +12,10 @@ Plain English:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
-                               QVBoxLayout)
+                               QVBoxLayout, QWidget)
 
 from .my_lyrics import TapSession
 from .overlay import format_time
@@ -26,6 +27,40 @@ def _t(t) -> str:
         return "  –:––.–"
     m = int(t // 60)
     return f"{m:3d}:{t - m * 60:04.1f}"
+
+
+class Timeline(QWidget):
+    """The whole song as a bar: where you are, and a tick for every timed line."""
+
+    def __init__(self, dialog):
+        super().__init__()
+        self.d = dialog
+        self.setMinimumHeight(34)
+
+    def paintEvent(self, _):
+        d = self.d
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = QRectF(self.rect()).adjusted(4, 8, -4, -8)
+        times = [t for t in d.session.times if t is not None]
+        total = max([d.duration or 0.0, (max(times) + 5) if times else 0.0, float(d.position_fn()) + 5, 30.0])
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#22222d"))
+        p.drawRoundedRect(QRectF(r.left(), r.center().y() - 3, r.width(), 6), 3, 3)
+        pos = max(0.0, min(1.0, float(d.position_fn()) / total))
+        p.setBrush(QColor("#8b5cf6"))
+        p.drawRoundedRect(QRectF(r.left(), r.center().y() - 3, r.width() * pos, 6), 3, 3)
+        for i, t in enumerate(d.session.times):
+            if t is None:
+                continue
+            x = r.left() + r.width() * max(0.0, min(1.0, t / total))
+            cur = i == d.session.cursor
+            p.setPen(QPen(QBrush(QColor("#ffffff" if cur else "#6f6f88")), 2.0 if cur else 1.0))
+            p.drawLine(QPointF(x, r.top() + (0 if cur else 4)), QPointF(x, r.bottom() - (0 if cur else 4)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#ffffff"))
+        p.drawEllipse(QPointF(r.left() + r.width() * pos, r.center().y()), 6, 6)
+        p.end()
 
 
 class TapSyncDialog(QDialog):
@@ -46,9 +81,11 @@ class TapSyncDialog(QDialog):
         self.shift = shift
         self.setWindowTitle(f"Sync this song – {title}")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setStyleSheet(STYLE + "QListWidget{background:#16161f;color:#ddd;border:1px solid #2c2c40;"
-                                   "font-family:Consolas,monospace;font-size:13px;}"
-                                   "QListWidget::item:selected{background:#3b2a66;color:#fff;}")
+        self.setStyleSheet(STYLE + "QListWidget{background:#14141b;color:#d8d8e4;border:1px solid #24242f;"
+                                   "border-radius:12px;padding:6px;font-family:'Cascadia Mono',Consolas,monospace;"
+                                   "font-size:13px;outline:0;}"
+                                   "QListWidget::item{padding:6px 8px;border-radius:8px;}"
+                                   "QListWidget::item:selected{background:#2a1f47;color:#fff;}")
         self.setMinimumSize(620, 560)
 
         root = QVBoxLayout(self)
@@ -63,11 +100,14 @@ class TapSyncDialog(QDialog):
         how.setStyleSheet("color:#b8b8cc; font-size:12px;")
         root.addWidget(how)
 
+        self.timeline = Timeline(self)
+        root.addWidget(self.timeline)
+
         self.next_lbl = QLabel()
         self.next_lbl.setWordWrap(True)
         self.next_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.next_lbl.setStyleSheet("color:#fff; font-size:20px; font-weight:bold; padding:8px;"
-                                    "border:1px solid #a855f7; border-radius:8px; background:#1c1530;")
+        self.next_lbl.setStyleSheet("color:#fff; font-size:22px; font-weight:600; padding:14px;"
+                                    "border:1px solid #6d4bd8; border-radius:14px; background:#1b1530;")
         root.addWidget(self.next_lbl)
 
         self.list = QListWidget()
@@ -86,7 +126,7 @@ class TapSyncDialog(QDialog):
         self.undo_btn = QPushButton("Undo")
         self.save_btn = QPushButton("Save")
         cancel = QPushButton("Cancel")
-        self.save_btn.setStyleSheet("background:#7c3aed; border-color:#a855f7;")
+        self.save_btn.setObjectName("primary")
         for b in (self.restart_btn, self.tap_btn, self.undo_btn, self.save_btn, cancel):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)     # Space must tap, not press a button
             row.addWidget(b)
@@ -190,7 +230,16 @@ class TapSyncDialog(QDialog):
         self.tap_btn.setEnabled(not s.done)
         self._refresh_status()
 
+    def showEvent(self, e):
+        super().showEvent(e)
+        try:
+            from . import win32
+            win32.set_dark_titlebar(int(self.winId()))
+        except Exception:
+            pass
+
     def _refresh_status(self):
+        self.timeline.update()
         seek = ("Clicking a line jumps the song to just before it." if self.can_seek_fn()
                 else "Your player doesn't allow jumping, so after clicking a line wait for it to come "
                      "round (or press Restart song).")

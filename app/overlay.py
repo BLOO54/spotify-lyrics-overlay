@@ -124,6 +124,54 @@ class OverlayWindow(QWidget):
         self._hover = False
         self.apply_settings()
 
+    # ------------------------------------------------------------ designs
+    DESIGNS = {
+        "classic": "Classic – your colours, glowing highlight",
+        "aurora": "Aurora – blurred album art, bright glowing lyrics",
+        "hud": "HUD – sharp gaming interface with accent lines",
+        "spotify": "Spotify-style – album-coloured card, left-aligned",
+    }
+
+    @property
+    def design(self) -> str:
+        return self.s.design if self.s.design in self.DESIGNS else "classic"
+
+    def _align_left(self) -> bool:
+        return self.design == "spotify"
+
+    def _line_colours(self, alpha: float):
+        """Colours for the karaoke line: (upcoming, highlight1, highlight2, sung, glow or None, outline factor)."""
+        text = _qc(self._c("text_color"), alpha)
+        hi1 = _qc(self._c("highlight_color"), alpha)
+        hi2 = _qc(self._c("highlight_color2"), alpha)
+        d = self.design
+        if d == "aurora":       # brightness, not colour: dim words light up white, with a soft coloured glow
+            white = QColor(255, 255, 255)
+            white.setAlphaF(alpha)
+            return _with_alpha(white, 0.42 * alpha), white, white, white, _with_alpha(hi1, 0.8 * alpha), 0.25
+        if d == "spotify":      # dark upcoming words on the coloured card, sung words turn white
+            white = QColor(255, 255, 255)
+            white.setAlphaF(alpha)
+            return QColor.fromRgbF(0, 0, 0, 0.55 * alpha), white, white, white, None, 0.0
+        sung = _mix(text, hi1, 0.45) if self.s.keep_sung_colored else text
+        return _with_alpha(text, 0.9 * alpha), hi1, hi2, sung, hi1, 1.0
+
+    def _side_colour(self, which: str, alpha: float) -> QColor:
+        """Colour for the previous / next lines in each design."""
+        text = self._c("text_color")
+        d = self.design
+        if d == "spotify":
+            return _qc("#FFFFFF", 0.62 * alpha) if which == "prev" else QColor.fromRgbF(0, 0, 0, 0.5 * alpha)
+        if d == "aurora":
+            return _qc("#FFFFFF", (0.30 if which == "prev" else 0.40) * alpha)
+        return _qc(text, (0.38 if which == "prev" else 0.5) * alpha)
+
+    def _design_fill(self) -> QColor:
+        """Card colour for the Spotify-style design: a deep version of the album / highlight colour."""
+        base = QColor(self._c("highlight_color"))
+        h, s, v, _ = base.getHsvF()
+        return QColor.fromHsvF(max(0.0, h), min(1.0, max(0.35, s * 0.8)), 0.42, self.s.background_opacity * 0.4 + 0.6)
+
     # ------------------------------------------------------------ colours
     def target_colours(self) -> dict:
         """The colours we're heading for: from Settings, or from the album art if matching is on."""
@@ -158,14 +206,20 @@ class OverlayWindow(QWidget):
         and the text wouldn't otherwise fit in the box."""
         fm, fa = self._fit_main * self._fit_all, self._fit_side * self._fit_all
         main = QFont(self.s.font_family, -1)
+        if self.design != "classic" and self.s.font_family == "Segoe UI":
+            # Windows 11's newer display font where available - crisper at large sizes
+            main.setFamilies(["Segoe UI Variable Display", "Segoe UI"])
         main.setPixelSize(max(8, int(self.s.font_size * fm)))
         main.setBold(self.s.bold)
         ctx = QFont(main)
         ctx.setPixelSize(max(8, int(self.s.side_font_size * fa)))
         ctx.setBold(False)
-        head = QFont(self.s.font_family, -1)
+        head = QFont(main)
         head.setPixelSize(max(8, int(self.s.title_font_size * fa)))
         head.setBold(True)
+        if self.design == "hud":
+            head.setCapitalization(QFont.Capitalization.AllUppercase)
+            head.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 112)
         extra = QFont(ctx)
         extra.setPixelSize(max(8, int(self.s.side_font_size * 0.89 * fa)))
         return main, ctx, head, extra
@@ -218,6 +272,8 @@ class OverlayWindow(QWidget):
         """Where the album art goes: None, "left" (big) or "header" (small, next to the title)."""
         if not self.s.show_album_art:
             return None
+        if self.design == "spotify":
+            return "header"
         pos = self.s.album_art_position
         if pos == "auto":
             pos = "left" if self.s.width >= 700 else "header"
@@ -385,7 +441,7 @@ class OverlayWindow(QWidget):
 
         self._rows = []
         if self._header_needed():
-            head_h = QFontMetricsF(head).height() * 1.6
+            head_h = QFontMetricsF(head).height() * (2.7 if self.design == "spotify" else 1.6)
             if self._art_mode() == "header" and self._art_bytes:
                 head_h = max(head_h, self._header_art_side() + 8)    # room for the cover
             self._rows.append(("header", head_h))
@@ -608,7 +664,7 @@ class OverlayWindow(QWidget):
 
     def _draw_text(self, p: QPainter, path: QPainterPath, brush, outline_alpha=0.55,
                    glow: QColor | None = None, glow_strength: float = 1.0):
-        if glow is not None and self.s.glow and glow_strength > 0.01:
+        if glow is not None and self.s.glow and glow_strength > 0.01 and self.design != "spotify":
             widths = ((16, 0.08), (10, 0.14), (5, 0.24)) if glow_strength > 1.0 else ((10, 0.10), (6, 0.18), (3, 0.30))
             g = min(glow_strength, 1.0)
             for width, a in widths:
@@ -620,18 +676,27 @@ class OverlayWindow(QWidget):
                                 Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         p.fillPath(path, brush)
 
+    def _row_x(self, left: float, right: float, width: float) -> float:
+        if self._align_left():
+            return left + self._pad * 0.4
+        return (left + right - width) / 2
+
     def _row_layout(self, rows, widths, gaps, space, left, right):
-        """Yield (row_index, [(piece_index, x)]) with every row centred."""
+        """Yield (row_index, [(piece_index, x)]) with every row centred (or left-aligned)."""
         for r, row in enumerate(rows):
             row_w = sum(widths[i] for i in row) + sum(space for i in row[:-1] if gaps[i])
-            x = (left + right - row_w) / 2
+            x = self._row_x(left, right, row_w)
             placed = []
             for i in row:
                 placed.append((i, x))
                 x += widths[i] + (space if gaps[i] else 0.0)
             yield r, placed
 
-    def _paint_simple_line(self, p, f: QFont, text: str, cy: float, color: QColor, area, max_rows: int = 1):
+    def _outline_factor(self) -> float:
+        return {"aurora": 0.25, "spotify": 0.0}.get(self.design, 1.0)
+
+    def _paint_simple_line(self, p, f: QFont, text: str, cy: float, color: QColor, area, max_rows: int = 1,
+                           soft: bool = False):
         """Draw plain (non-karaoke) text centred at cy, wrapping onto up to max_rows rows."""
         if not text or color.alphaF() <= 0.01:
             return
@@ -649,9 +714,19 @@ class OverlayWindow(QWidget):
         for r, row in enumerate(rows):
             row_text = "".join(tokens[i][0] + (" " if gaps[i] and i != row[-1] else "") for i in row)
             row_text = fm.elidedText(row_text, Qt.TextElideMode.ElideRight, avail)
-            x = (left + right - fm.horizontalAdvance(row_text)) / 2
+            x = self._row_x(left, right, fm.horizontalAdvance(row_text))
             base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
-            self._draw_text(p, self._text_path(f, x, base, row_text), color, 0.45 * color.alphaF())
+            path = self._text_path(f, x, base, row_text)
+            if soft:
+                # a gentle out-of-focus look for the lines around the current one (Aurora)
+                for dx, dy in ((-0.9, 0), (0.9, 0), (0, -0.9), (0, 0.9)):
+                    p.save()
+                    p.translate(dx, dy)
+                    p.fillPath(path, _with_alpha(color, color.alphaF() * 0.35))
+                    p.restore()
+                p.fillPath(path, _with_alpha(color, color.alphaF() * 0.6))
+            else:
+                self._draw_text(p, path, color, 0.45 * color.alphaF() * self._outline_factor())
 
     def time_text(self) -> str:
         if self.s.time_display == "off" or self.duration <= 0:
@@ -691,6 +766,10 @@ class OverlayWindow(QWidget):
         p.end()
 
     def _paint_background(self, p: QPainter):
+        d = self.design
+        if d != "classic" and self.s.show_background:
+            {"aurora": self._bg_aurora, "hud": self._bg_hud, "spotify": self._bg_spotify}[d](p)
+            return
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         radius = min(self._radius(), r.height() / 2)
         if self.s.show_background:
@@ -723,6 +802,105 @@ class OverlayWindow(QWidget):
             p.setPen(QPen(QBrush(g), 1.4))
             p.drawRoundedRect(r, radius, radius)
 
+    # -------- design backgrounds
+    def _blurred_art(self, w: int, h: int):
+        """The album cover, heavily blurred to fill the card (cached; cheap 'shrink then enlarge' blur)."""
+        key = (id(self._art_bytes), w, h)
+        if getattr(self, "_blur_key", None) == key:
+            return self._blur_pix
+        pix = QPixmap()
+        if not self._art_bytes or not pix.loadFromData(self._art_bytes) or pix.isNull():
+            self._blur_key, self._blur_pix = key, None
+            return None
+        tiny = pix.scaled(10, 10, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                          Qt.TransformationMode.SmoothTransformation)
+        mid = tiny.scaled(40, 40, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        big = mid.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+        self._blur_key, self._blur_pix = key, big
+        return big
+
+    def _card_path(self, r: QRectF, radius: float) -> QPainterPath:
+        path = QPainterPath()
+        path.addRoundedRect(r, radius, radius)
+        return path
+
+    def _bg_aurora(self, p: QPainter):
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        radius = min(max(self._radius(), 14.0), r.height() / 2)
+        clip = self._card_path(r, radius)
+        p.save()
+        p.setClipPath(clip)
+        art = self._blurred_art(int(r.width()), int(r.height()))
+        if art is not None:
+            p.setOpacity(min(1.0, 0.45 + self.s.background_opacity))
+            p.drawPixmap(int(r.x() + (r.width() - art.width()) / 2), int(r.y() + (r.height() - art.height()) / 2), art)
+            p.setOpacity(1.0)
+        else:                       # no cover: a soft gradient of the highlight colours
+            g = QLinearGradient(r.topLeft(), r.bottomRight())
+            g.setColorAt(0, _qc(self._c("highlight_color"), 0.55))
+            g.setColorAt(1, _qc(self._c("highlight_color2"), 0.55))
+            p.fillRect(r, QBrush(g))
+        # darken for readability, lighter at the top like light falling on glass
+        shade = QLinearGradient(r.topLeft(), r.bottomLeft())
+        shade.setColorAt(0.0, QColor.fromRgbF(0, 0, 0, 0.30))
+        shade.setColorAt(1.0, QColor.fromRgbF(0, 0, 0, 0.58))
+        p.fillRect(r, QBrush(shade))
+        p.restore()
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QBrush(QColor(255, 255, 255, 38)), 1.0))
+        p.drawPath(self._card_path(r.adjusted(0.5, 0.5, -0.5, -0.5), radius))
+
+    def _bg_hud(self, p: QPainter):
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        cut = min(14.0, r.height() / 5)
+        # angled corners (top-left and bottom-right) like a game HUD panel
+        shape = QPainterPath()
+        shape.moveTo(r.left() + cut, r.top())
+        shape.lineTo(r.right(), r.top())
+        shape.lineTo(r.right(), r.bottom() - cut)
+        shape.lineTo(r.right() - cut, r.bottom())
+        shape.lineTo(r.left(), r.bottom())
+        shape.lineTo(r.left(), r.top() + cut)
+        shape.closeSubpath()
+        p.fillPath(shape, _qc(self._c("background_color"), self.s.background_opacity))
+        hi1, hi2 = _qc(self._c("highlight_color")), _qc(self._c("highlight_color2"))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QBrush(_with_alpha(hi1, 0.22)), 1.0))
+        p.drawPath(shape)
+        # bright accent strip along the top, fading out
+        g = QLinearGradient(r.left(), 0, r.right(), 0)
+        g.setColorAt(0.0, _with_alpha(hi1, 0.95))
+        g.setColorAt(0.6, _with_alpha(hi2, 0.55))
+        g.setColorAt(1.0, _with_alpha(hi2, 0.0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(g))
+        top = QPainterPath()
+        top.moveTo(r.left() + cut, r.top())
+        top.lineTo(r.right() * 0.75, r.top())
+        top.lineTo(r.right() * 0.75 - 2, r.top() + 2)
+        top.lineTo(r.left() + cut - 2, r.top() + 2)
+        top.closeSubpath()
+        p.drawPath(top)
+        # corner brackets
+        pen = QPen(QBrush(_with_alpha(hi1, 0.85)), 2.0)
+        p.setPen(pen)
+        b = 10.0
+        p.drawLine(QPointF(r.right() - b, r.top() + 1), QPointF(r.right() - 1, r.top() + 1))
+        p.drawLine(QPointF(r.right() - 1, r.top() + 1), QPointF(r.right() - 1, r.top() + b))
+        p.drawLine(QPointF(r.left() + 1, r.bottom() - b), QPointF(r.left() + 1, r.bottom() - 1))
+        p.drawLine(QPointF(r.left() + 1, r.bottom() - 1), QPointF(r.left() + b, r.bottom() - 1))
+
+    def _bg_spotify(self, p: QPainter):
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        radius = min(12.0, r.height() / 2)
+        fill = self._design_fill()
+        g = QLinearGradient(r.topLeft(), r.bottomLeft())
+        g.setColorAt(0, fill.lighter(112))
+        g.setColorAt(1, fill.darker(115))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(g))
+        p.drawRoundedRect(r, radius, radius)
+
     def _paint_art(self, p: QPainter, x: float, y: float, side: float, radius: float = 10):
         size = int(side)
         if size < 8:
@@ -749,6 +927,8 @@ class OverlayWindow(QWidget):
         p.drawRoundedRect(rect, radius, radius)
 
     def _paint_header(self, p: QPainter, f: QFont, row, area):
+        if self.design == "spotify":
+            return self._header_spotify(p, f, row, area)
         y, row_h = row
         left, right = area
         fm = QFontMetricsF(f)
@@ -778,6 +958,29 @@ class OverlayWindow(QWidget):
                 p.drawText(QPointF(right_edge - lw, base), label)
                 right_edge -= lw + 14
         if self.s.show_title:
+            d = self.design
+            if d == "hud":
+                tag = "▸ " if self.playing else "❚❚ "
+                text = f"{tag}{self.title}  //  {self.artist}" if self.title else "▸ SPOTIFY LYRICS OVERLAY"
+                text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x))
+                p.setPen(_qc(self._c("highlight_color"), 0.9))
+                p.drawText(QPointF(x, base), text)
+                return
+            if d == "aurora" and self.title:
+                # bold title, softer artist
+                title_t = fm.elidedText(self.title, Qt.TextElideMode.ElideRight, max(30.0, (right_edge - x) * 0.65))
+                p.setPen(QColor(255, 255, 255, 235))
+                p.drawText(QPointF(x, base), title_t)
+                if self.artist:
+                    af = QFont(f)
+                    af.setBold(False)
+                    p.setFont(af)
+                    tw = fm.horizontalAdvance(title_t)
+                    rest = QFontMetricsF(af).elidedText("  ·  " + self.artist, Qt.TextElideMode.ElideRight,
+                                                         max(10.0, right_edge - x - tw))
+                    p.setPen(QColor(255, 255, 255, 150))
+                    p.drawText(QPointF(x + tw, base), rest)
+                return
             if self.title:
                 icon = "♪ " if self.playing else "❚❚ "
                 text = f"{icon}{self.title}  —  {self.artist}" if self.artist else f"{icon}{self.title}"
@@ -787,6 +990,42 @@ class OverlayWindow(QWidget):
             p.setPen(_qc(self._c("text_color"), 0.72))
             p.drawText(QPointF(x, base), text)
 
+    def _header_spotify(self, p: QPainter, f: QFont, row, area):
+        """Album art + title on top, artist underneath, time on the right - like Spotify's now-playing."""
+        y, row_h = row
+        left, right = area
+        x = left + self._pad * 0.4
+        right -= self._pad * 0.4
+        if self._art_bytes and self.s.show_album_art:
+            side = min(row_h - 6, self._header_art_side() * 1.15)
+            self._paint_art(p, x, y + (row_h - side) / 2, side, radius=6)
+            x += side + 12
+        title_f = QFont(f)
+        title_f.setPixelSize(int(f.pixelSize() * 1.15))
+        sub_f = QFont(f)
+        sub_f.setBold(False)
+        tfm, sfm = QFontMetricsF(title_f), QFontMetricsF(sub_f)
+        t = self.time_text()
+        right_edge = right
+        if t:
+            p.setFont(sub_f)
+            tw = sfm.horizontalAdvance(t)
+            p.setPen(QColor(255, 255, 255, 190))
+            p.drawText(QPointF(right_edge - tw, y + row_h / 2 + sfm.ascent() / 2 - 1), t)
+            right_edge -= tw + 14
+        if not self.s.show_title:
+            return
+        block = tfm.height() + sfm.height()
+        top = y + (row_h - block) / 2
+        p.setFont(title_f)
+        p.setPen(QColor(255, 255, 255, 245))
+        p.drawText(QPointF(x, top + tfm.ascent()),
+                   tfm.elidedText(self.title or "Spotify Lyrics Overlay", Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
+        p.setFont(sub_f)
+        p.setPen(QColor(255, 255, 255, 170))
+        p.drawText(QPointF(x, top + tfm.height() + sfm.ascent()),
+                   sfm.elidedText(self.artist or "", Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
+
     def _paint_progress(self, p: QPainter, area):
         if self.duration <= 0:
             return
@@ -795,14 +1034,24 @@ class OverlayWindow(QWidget):
         right -= self._pad * 0.4
         y = self.height() - self._pad * 0.6 - 3
         prog = _clamp01(self.play_pos / self.duration)
+        d = self.design
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_qc(self._c("text_color"), 0.15))
-        p.drawRoundedRect(QRectF(left, y, right - left, 3), 1.5, 1.5)
-        g = QLinearGradient(left, 0, right, 0)
-        g.setColorAt(0, _qc(self._c("highlight_color")))
-        g.setColorAt(1, _qc(self._c("highlight_color2")))
-        p.setBrush(QBrush(g))
-        p.drawRoundedRect(QRectF(left, y, (right - left) * prog, 3), 1.5, 1.5)
+        if d in ("aurora", "spotify"):
+            track, fill = QColor(255, 255, 255, 50), QBrush(QColor(255, 255, 255, 230))
+        else:
+            track = _qc(self._c("text_color"), 0.15)
+            g = QLinearGradient(left, 0, right, 0)
+            g.setColorAt(0, _qc(self._c("highlight_color")))
+            g.setColorAt(1, _qc(self._c("highlight_color2")))
+            fill = QBrush(g)
+        h = 2.0 if d == "hud" else 3.0
+        rad = 0.0 if d == "hud" else 1.5
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(left, y, right - left, h), rad, rad)
+        p.setBrush(fill)
+        p.drawRoundedRect(QRectF(left, y, (right - left) * prog, h), rad, rad)
+        if d == "spotify" and prog > 0:          # Spotify's little position dot
+            p.drawEllipse(QPointF(left + (right - left) * prog, y + h / 2), 4.5, 4.5)
 
     def _pulse(self) -> float:
         return 0.45 + 0.25 * abs(((time.monotonic() * 1.2) % 2) - 1)
@@ -832,10 +1081,12 @@ class OverlayWindow(QWidget):
 
         if "prev" in rows and idx - 1 >= 0:
             self._paint_simple_line(p, ctx_f, self._main_text(idx - 1), cy("prev") + slide,
-                                    _qc(text_col, 0.38 * a), area, self._row_caps["prev"])
+                                    self._side_colour("prev", a), area, self._row_caps["prev"],
+                                    soft=self.design == "aurora")
         if "next" in rows and idx + 1 < len(lines):
             self._paint_simple_line(p, ctx_f, self._main_text(idx + 1) or "♪", cy("next") + slide * 0.5,
-                                    _qc(text_col, 0.5), area, self._row_caps["next"])
+                                    self._side_colour("next", 1.0), area, self._row_caps["next"],
+                                    soft=self.design == "aurora")
 
         if idx >= 0 and not lines[idx].is_break and "trans" in rows and self.extras is None \
                 and self.translation_pending:
@@ -859,7 +1110,7 @@ class OverlayWindow(QWidget):
 
         old = getattr(self, "_fade_from", None)
         if a < 1.0 and old is not None and 0 <= old < len(lines) and not lines[old].is_break:
-            sung = _mix(_qc(text_col), _qc(self._c("highlight_color")), 0.45 if self.s.keep_sung_colored else 0.0)
+            sung = self._line_colours(1.0)[3]
             self._paint_simple_line(p, main_f, self._main_text(old), cy("main") - a * self._ctx_h * 0.9,
                                     _with_alpha(sung, 0.85 * (1 - a)), area, self._row_caps["main"])
 
@@ -880,10 +1131,9 @@ class OverlayWindow(QWidget):
                             alpha: float, area):
         left, right = area
         avail = right - left - self._pad * 0.5
-        text_c = _qc(self._c("text_color"), alpha)
-        hi1 = _qc(self._c("highlight_color"), alpha)
-        hi2 = _qc(self._c("highlight_color2"), alpha)
-        oa = 0.55 * alpha
+        upcoming, hi1, hi2, sung_target, glow_c, ofac = self._line_colours(alpha)
+        text_c = upcoming
+        oa = 0.55 * alpha * ofac
         style = self.s.highlight_style
 
         if line.words:
@@ -904,7 +1154,7 @@ class OverlayWindow(QWidget):
             for r, placed in layout:
                 base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
                 for i, x in placed:
-                    self._draw_text(p, self._text_path(f, x, base, tokens[i][0]), text_c, oa, glow=hi1)
+                    self._draw_text(p, self._text_path(f, x, base, tokens[i][0]), sung_target, oa, glow=glow_c)
             last = layout[-1][1]
             x0 = min(x for _, x in layout[0][1] + last)
             x1 = max(x + widths[i] for r, placed in layout for i, x in placed)
@@ -921,7 +1171,6 @@ class OverlayWindow(QWidget):
             return
 
         # ---- word-by-word karaoke, row by row
-        sung_target = _mix(text_c, hi1, 0.45) if self.s.keep_sung_colored else text_c
         height = fm.height()
         for r, placed in layout:
             base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
@@ -936,14 +1185,14 @@ class OverlayWindow(QWidget):
                 if t >= word.end:
                     fade = _clamp01((t - word.end) / SUNG_FADE)
                     c = _mix(hi1, sung_target, fade)
-                    self._draw_text(p, path, c, oa, glow=hi1 if fade < 1 else None, glow_strength=1 - fade)
+                    self._draw_text(p, path, c, oa, glow=glow_c if fade < 1 else None, glow_strength=1 - fade)
                 elif t >= word.start:
                     dur = max(word.end - word.start, 0.01)
                     self._paint_current_word(p, path, grad, style, x, w, base, top, height, fm,
                                              _clamp01((t - word.start) / dur), t - word.start,
-                                             text_c, hi1, oa)
+                                             text_c, glow_c if glow_c is not None else hi1, oa)
                 else:
-                    self._draw_text(p, path, _with_alpha(text_c, 0.9 * alpha), oa)
+                    self._draw_text(p, path, text_c, oa)
 
     def _paint_current_word(self, p, path, grad, style, x, w, base, top, height, fm,
                             prog, since, text_c, hi1, oa):

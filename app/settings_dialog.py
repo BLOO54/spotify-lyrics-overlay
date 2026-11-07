@@ -2,32 +2,56 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QDialog,
-                               QFontComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QFontComboBox,
+                               QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
 from . import APP_NAME, APP_VERSION, hotkeys
 from .config import POSITIONS, Settings
 from .themes import CUSTOM, HIGHLIGHT_STYLES, THEME_KEYS, THEMES, apply_theme
 from .translate import LANGUAGES, romaji_available
 
+# One design language for every window: deep charcoal, soft cards, violet accent.
 STYLE = """
-QDialog, QTabWidget::pane, QWidget#page { background: #12121c; color: #e8e8f0; }
-QTabWidget::pane { border: 1px solid #2c2c40; border-radius: 8px; top: -1px; }
-QTabBar::tab { background: #1c1c2b; color: #b8b8cc; padding: 7px 14px; border: 1px solid #2c2c40;
-               border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px; }
-QTabBar::tab:selected { background: #2a1f48; color: #fff; border-color: #a855f7; }
-QLabel, QCheckBox { color: #e8e8f0; }
-QComboBox, QSpinBox, QFontComboBox, QLineEdit { background: #1c1c2b; color: #fff; border: 1px solid #34344c;
-            border-radius: 5px; padding: 3px 6px; min-height: 22px; }
-QComboBox QAbstractItemView { background: #1c1c2b; color: #fff; selection-background-color: #7c3aed; }
-QPushButton { background: #2a2a40; color: #fff; border: 1px solid #3a3a58; border-radius: 6px; padding: 5px 12px; }
-QPushButton:hover { background: #3b2a66; border-color: #a855f7; }
-QSlider::groove:horizontal { height: 4px; background: #2c2c40; border-radius: 2px; }
-QSlider::handle:horizontal { background: #a855f7; width: 14px; margin: -6px 0; border-radius: 7px; }
-QSlider::sub-page:horizontal { background: #7c3aed; border-radius: 2px; }
+QDialog, QWidget#page, QScrollArea, QScrollArea > QWidget > QWidget { background: #0f0f15; color: #ececf3; }
+QWidget { font-family: "Segoe UI Variable Text", "Segoe UI"; font-size: 13px; }
+QFrame#card { background: #17171f; border: 1px solid #24242f; border-radius: 14px; }
+QFrame#sidebar { background: #13131a; border-right: 1px solid #1f1f29; }
+QFrame#preview { background: #0b0b10; border: 1px solid #24242f; border-radius: 14px; }
+QLabel { color: #ececf3; background: transparent; }
+QLabel#pageTitle { font-size: 22px; font-weight: 600; }
+QLabel#pageSub { color: #8d8da3; font-size: 12px; }
+QLabel#section { color: #b9a6ff; font-weight: 600; font-size: 12px; padding-top: 6px; letter-spacing: 0.5px; }
+QCheckBox { color: #ececf3; spacing: 10px; background: transparent; }
+QCheckBox::indicator { width: 34px; height: 18px; border-radius: 9px; background: #2a2a36; border: 1px solid #383848; }
+QCheckBox::indicator:checked { background: #8b5cf6; border-color: #a78bfa; }
+QComboBox, QSpinBox, QFontComboBox, QLineEdit { background: #1d1d27; color: #fff; border: 1px solid #2e2e3c;
+            border-radius: 8px; padding: 5px 10px; min-height: 24px; }
+QComboBox:hover, QSpinBox:hover, QLineEdit:hover { border-color: #4a4a62; }
+QComboBox:focus, QSpinBox:focus, QLineEdit:focus { border-color: #8b5cf6; }
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox QAbstractItemView { background: #1d1d27; color: #fff; border: 1px solid #2e2e3c; border-radius: 8px;
+            selection-background-color: #6d28d9; outline: 0; padding: 4px; }
+QPushButton { background: #22222d; color: #fff; border: 1px solid #32323f; border-radius: 9px; padding: 7px 14px; }
+QPushButton:hover { background: #2c2440; border-color: #8b5cf6; }
+QPushButton:pressed { background: #3b2a66; }
+QPushButton#primary { background: #7c3aed; border-color: #8b5cf6; font-weight: 600; }
+QPushButton#primary:hover { background: #8b5cf6; }
+QSlider::groove:horizontal { height: 4px; background: #2a2a36; border-radius: 2px; }
+QSlider::handle:horizontal { background: #fff; border: 3px solid #8b5cf6; width: 12px; height: 12px;
+            margin: -7px 0; border-radius: 9px; }
+QSlider::sub-page:horizontal { background: #8b5cf6; border-radius: 2px; }
+QListWidget#nav { background: transparent; border: none; outline: 0; color: #b8b8cc; font-size: 14px; }
+QListWidget#nav::item { padding: 10px 14px; margin: 2px 8px; border-radius: 10px; }
+QListWidget#nav::item:hover { background: #1c1c26; color: #fff; }
+QListWidget#nav::item:selected { background: #241b3d; color: #fff; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar::handle:vertical { background: #2e2e3c; border-radius: 4px; min-height: 30px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QToolTip { background: #1d1d27; color: #fff; border: 1px solid #2e2e3c; padding: 6px; border-radius: 6px; }
 """
 
 LINE_CHOICES = [
@@ -179,48 +203,156 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(f"{APP_NAME} – Settings")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setStyleSheet(STYLE)
-        self.setMinimumWidth(520)
+        self.resize(940, 680)
+        self.setMinimumSize(760, 520)
         self._building = True
         self._w = {}      # setting name -> widget, for refreshing
+        self._preview_fn = None
 
-        root = QVBoxLayout(self)
-        tabs = QTabWidget()
-        root.addWidget(tabs)
-        tabs.addTab(self._look_tab(), "Look")
-        tabs.addTab(self._layout_tab(), "Layout")
-        tabs.addTab(self._lyrics_tab(), "Lyrics && translation")
-        tabs.addTab(self._behaviour_tab(), "Behaviour")
-        tabs.addTab(self._shortcuts_tab(), "Shortcuts")
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ---- sidebar
+        side = QFrame()
+        side.setObjectName("sidebar")
+        side.setFixedWidth(220)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(0, 18, 0, 14)
+        brand = QLabel("♪  Lyrics Overlay")
+        brand.setStyleSheet("font-size:16px; font-weight:600; padding: 0 22px 14px 22px;")
+        sl.addWidget(brand)
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        sl.addWidget(self.nav, 1)
+        ver = QLabel(f"Version {APP_VERSION}\nLyrics from LRCLIB.net")
+        ver.setStyleSheet("color:#5f5f78; font-size:11px; padding: 0 22px;")
+        sl.addWidget(ver)
+        root.addWidget(side)
+
+        # ---- content
+        content = QVBoxLayout()
+        content.setContentsMargins(26, 20, 26, 18)
+        content.setSpacing(12)
+        self.preview_frame = QFrame()
+        self.preview_frame.setObjectName("preview")
+        pl = QVBoxLayout(self.preview_frame)
+        pl.setContentsMargins(10, 10, 10, 10)
+        self.preview = QLabel("Live preview appears here")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setMinimumHeight(120)
+        self.preview.setStyleSheet("color:#5f5f78;")
+        pl.addWidget(self.preview)
+        content.addWidget(self.preview_frame)
+        self.page_title = QLabel()
+        self.page_title.setObjectName("pageTitle")
+        self.page_sub = QLabel()
+        self.page_sub.setObjectName("pageSub")
+        content.addWidget(self.page_title)
+        content.addWidget(self.page_sub)
+        self.stack = QStackedWidget()
+        content.addWidget(self.stack, 1)
+
+        pages = [
+            ("Look", "Design, theme, colours and text sizes", self._look_tab()),
+            ("Layout", "What's shown, where, and how big", self._layout_tab()),
+            ("Lyrics & translation", "Timing, your own lyrics and translations", self._lyrics_tab()),
+            ("Behaviour", "Click-through, notifications and updates", self._behaviour_tab()),
+            ("Shortcuts", "Keys that work even in games", self._shortcuts_tab()),
+        ]
+        icons = ["◐", "▦", "♫", "⚙", "⌨"]
+        self._pages = pages
+        for (name, sub, widget), icon in zip(pages, icons):
+            self.nav.addItem(QListWidgetItem(f"{icon}   {name}"))
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(widget)
+            self.stack.addWidget(scroll)
+        self.nav.currentRowChanged.connect(self._show_page)
 
         self.keys_label = QLabel(hotkey_help(self.s))
         self.keys_label.setWordWrap(True)
-        self.keys_label.setStyleSheet("color:#b8b8cc; font-size:11px; padding:4px;")
-        root.addWidget(self.keys_label)
+        self.keys_label.setStyleSheet("color:#7f7f98; font-size:11px;")
+        content.addWidget(self.keys_label)
 
         btns = QHBoxLayout()
-        ver = QLabel(f"v{APP_VERSION} · lyrics from LRCLIB.net")
-        ver.setStyleSheet("color:#6c6c88; font-size:10px;")
-        btns.addWidget(ver)
         btns.addStretch(1)
         reset = QPushButton("Reset to defaults")
         reset.clicked.connect(self._reset)
-        close = QPushButton("Close")
+        close = QPushButton("Done")
+        close.setObjectName("primary")
         close.clicked.connect(self.close)
         btns.addWidget(reset)
         btns.addWidget(close)
-        root.addLayout(btns)
+        content.addLayout(btns)
+        root.addLayout(content, 1)
+
+        self.nav.setCurrentRow(0)
+        self.preview_timer = QTimer(self)
+        self.preview_timer.timeout.connect(self._update_preview)
+        self.preview_timer.start(120)
         self._building = False
+
+    def _show_page(self, row: int):
+        if 0 <= row < len(self._pages):
+            self.stack.setCurrentIndex(row)
+            self.page_title.setText(self._pages[row][0])
+            self.page_sub.setText(self._pages[row][1])
+
+    def set_preview_source(self, fn):
+        """fn() returns a QPixmap of the real overlay - shown live at the top of the window."""
+        self._preview_fn = fn
+
+    def _update_preview(self):
+        if self._preview_fn is None or not self.isVisible():
+            return
+        try:
+            pix = self._preview_fn()
+        except Exception:
+            return
+        if pix is None or pix.isNull():
+            return
+        w = max(50, self.preview.width())
+        h = max(50, self.preview.height())
+        self.preview.setPixmap(pix.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation))
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        try:
+            from . import win32
+            win32.set_dark_titlebar(int(self.winId()))
+        except Exception:
+            pass
 
     # ------------------------------------------------------------ tabs
     def _page(self):
-        w = QWidget()
-        w.setObjectName("page")
-        f = QFormLayout(w)
-        f.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        return w, f
+        """A page: one rounded card holding a form."""
+        outer = QWidget()
+        outer.setObjectName("page")
+        ol = QVBoxLayout(outer)
+        ol.setContentsMargins(0, 4, 8, 4)
+        card = QFrame()
+        card.setObjectName("card")
+        f = QFormLayout(card)
+        f.setContentsMargins(22, 18, 22, 18)
+        f.setHorizontalSpacing(18)
+        f.setVerticalSpacing(12)
+        f.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        ol.addWidget(card)
+        ol.addStretch(1)
+        return outer, f
 
     def _look_tab(self):
         w, f = self._page()
+        from .overlay import OverlayWindow
+        self._w["design"] = dz = QComboBox()
+        for key, label in OverlayWindow.DESIGNS.items():
+            dz.addItem(label, key)
+        dz.setCurrentIndex(max(0, dz.findData(self.s.design)))
+        dz.currentIndexChanged.connect(lambda i: self._set("design", dz.itemData(i)))
+        f.addRow("Design", dz)
         self.theme_box = QComboBox()
         self.theme_box.addItems(list(THEMES) + [CUSTOM])
         self.theme_box.setCurrentText(self.s.theme if self.s.theme in THEMES else CUSTOM)
@@ -288,7 +420,7 @@ class SettingsDialog(QDialog):
         f.addRow("Overall opacity", self._w["window_opacity"])
 
         sep = QLabel("<b>Match the album art</b>")
-        sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")
+        sep.setObjectName("section")
         f.addRow(sep)
         self._w["match_album_highlight"] = self._check("Highlight colours from the album art", "match_album_highlight")
         f.addRow(self._w["match_album_highlight"])
@@ -396,7 +528,7 @@ class SettingsDialog(QDialog):
         f.addRow(holder)
 
         sep = QLabel("<b>Translation</b>")
-        sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")
+        sep.setObjectName("section")
         f.addRow(sep)
         self._w["translate_enabled"] = self._check(
             "Translate songs that aren't in my language", "translate_enabled")
@@ -454,9 +586,16 @@ class SettingsDialog(QDialog):
                           ("spotify_only", "Only follow Spotify (ignore other media players)")):
             self._w[key] = self._check(text, key)
             f.addRow(self._w[key])
+        self._w["popup_style"] = ps = QComboBox()
+        for key, label in (("app", "App style – sliding cards and a dark menu"),
+                           ("windows", "Windows style – standard notifications and menu")):
+            ps.addItem(label, key)
+        ps.setCurrentIndex(max(0, ps.findData(self.s.popup_style)))
+        ps.currentIndexChanged.connect(lambda i: self._set("popup_style", ps.itemData(i)))
+        f.addRow("Pop-ups && menu", ps)
 
         sep = QLabel("<b>Updates</b>")
-        sep.setStyleSheet("color:#c9b8ff; padding-top:8px;")
+        sep.setObjectName("section")
         f.addRow(sep)
         self._w["auto_update_check"] = self._check("Check for new versions automatically", "auto_update_check")
         f.addRow(self._w["auto_update_check"])

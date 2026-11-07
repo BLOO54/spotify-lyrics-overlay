@@ -28,6 +28,7 @@ from .my_lyrics import MyLyrics, lines_for_tapping
 from . import hotkeys, updater
 from .overlay import OverlayWindow
 from .settings_dialog import SettingsDialog
+from .toast import Toast, style_menu
 from .translate import (TranslationKeyError, TranslationQuotaError,
                         TranslationService)
 
@@ -206,12 +207,25 @@ class Controller(QObject):
         self.menu.addAction(act_check)
         self.menu.addAction(act_quit)
 
+        self.toast = Toast(self.icon)
+        self.toast.clicked.connect(self._tray_message_clicked)
+        if self.s.popup_style == "app":
+            style_menu(self.menu)
         self.tray = QSystemTrayIcon(self.icon, self)
         self.tray.setToolTip(APP_NAME)
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._tray_activated)
         self.tray.messageClicked.connect(self._tray_message_clicked)
         self.tray.show()
+
+    def notify(self, text: str, kind: str = "info", ms: int = 4000, action: str = ""):
+        """Show a pop-up: the app's own sliding card, or a standard Windows notification."""
+        if self.s.popup_style == "windows":
+            icon = (QSystemTrayIcon.MessageIcon.Warning if kind == "warning"
+                    else QSystemTrayIcon.MessageIcon.Information)
+            self.tray.showMessage(APP_NAME, text, icon, ms)
+        else:
+            self.toast.show_message(APP_NAME, text, kind, ms, action)
 
     def _tray_message_clicked(self):
         if self.update_info is not None:
@@ -233,10 +247,7 @@ class Controller(QObject):
         parts = [f"{getattr(self.s, f)} {what}" for f, what in
                  (("hk_toggle", "hide/show"), ("hk_click", "click-through"), ("hk_settings", "settings"))
                  if getattr(self.s, f)]
-        self.tray.showMessage(
-            APP_NAME,
-            "Running in the system tray (bottom-right).\n" + " · ".join(parts),
-            QSystemTrayIcon.MessageIcon.Information, 8000)
+        self.notify("Running in the system tray (bottom-right).\n" + " · ".join(parts), "info", 8000)
 
     # ------------------------------------------------------------ hotkeys
     def _register_hotkeys(self, announce_failures: bool = True):
@@ -258,9 +269,8 @@ class Controller(QObject):
             else:
                 failed.append(keys)
         if failed and announce_failures:
-            QTimer.singleShot(1500, lambda: self.tray.showMessage(
-                APP_NAME, "These shortcuts are already used by another program: " + ", ".join(failed)
-                + ". Pick different ones in Settings → Shortcuts.", QSystemTrayIcon.MessageIcon.Warning, 7000))
+            QTimer.singleShot(1500, lambda: self.notify("These shortcuts are already used by another program: " + ", ".join(failed)
+                + ". Pick different ones in Settings → Shortcuts.", "warning", 7000))
         return failed
 
     def unregister_hotkeys(self):
@@ -308,15 +318,13 @@ class Controller(QObject):
         self.overlay.apply_click_through()
         if self.settings_dlg:
             self.settings_dlg.sync_from_settings()
-        self.tray.showMessage(APP_NAME, "Click-through ON – the overlay ignores the mouse."
-                              if on else "Click-through OFF – you can drag the overlay.",
-                              QSystemTrayIcon.MessageIcon.Information, 2000)
+        self.notify("Click-through ON – the overlay ignores the mouse."
+                              if on else "Click-through OFF – you can drag the overlay.", "info", 2000)
 
     def nudge_offset(self, delta_ms):
         """Adjust the timing of the song that's playing now (remembered for that song)."""
         if not (self.track and self.track.title):
-            self.tray.showMessage(APP_NAME, "Play a song first, then adjust its timing.",
-                                  QSystemTrayIcon.MessageIcon.Information, 2000)
+            self.notify("Play a song first, then adjust its timing.", "info", 2000)
             return
         title, artist = self.track.title, self.track.artist
         new = 0 if delta_ms is None else self._song_offset_ms + delta_ms
@@ -324,8 +332,7 @@ class Controller(QObject):
         self._song_offset_ms = self.song_sync.get(title, artist)
         ms = self._song_offset_ms
         what = "back to normal" if ms == 0 else (f"{abs(ms) / 1000:.2f} s {'earlier' if ms > 0 else 'later'}")
-        self.tray.showMessage(APP_NAME, f"{title}: lyrics {what} (remembered for this song)",
-                              QSystemTrayIcon.MessageIcon.Information, 1800)
+        self.notify(f"{title}: lyrics {what} (remembered for this song)", "info", 1800)
 
     def try_other_version(self):
         """Switch to the next timed-lyrics version LRCLIB has for this song."""
@@ -334,8 +341,7 @@ class Controller(QObject):
             return
         self._version_busy = True
         token = self.fetch_token
-        self.tray.showMessage(APP_NAME, "Looking for other lyrics versions…",
-                              QSystemTrayIcon.MessageIcon.Information, 1500)
+        self.notify("Looking for other lyrics versions…", "info", 1500)
         title, artist, album, dur = st.title, st.artist, st.album, st.duration
 
         def work():
@@ -352,13 +358,11 @@ class Controller(QObject):
         if token != self.fetch_token or not self.track:
             return
         if isinstance(result, Exception):
-            self.tray.showMessage(APP_NAME, "Couldn't reach the lyrics service – try again in a moment.",
-                                  QSystemTrayIcon.MessageIcon.Warning, 2500)
+            self.notify("Couldn't reach the lyrics service – try again in a moment.", "warning", 2500)
             return
         if len(result) <= 1:
-            self.tray.showMessage(APP_NAME, "No other timed versions of this song's lyrics were found. "
-                                  "You can still fix the timing with Ctrl+Alt+← / →.",
-                                  QSystemTrayIcon.MessageIcon.Information, 4000)
+            self.notify("No other timed versions of this song's lyrics were found. "
+                                  "You can still fix the timing with Ctrl+Alt+← / →.", "info", 4000)
             return
         current = self._last_result.synced if self._last_result else None
         idx = next((i for i, r in enumerate(result) if r.synced == current), -1)
@@ -369,8 +373,7 @@ class Controller(QObject):
         self._last_result = chosen
         self._extras, self._extras_key = None, None
         self._show_result(chosen)
-        self.tray.showMessage(APP_NAME, f"Lyrics version {nxt + 1} of {len(result)} (remembered for this song)",
-                              QSystemTrayIcon.MessageIcon.Information, 2500)
+        self.notify(f"Lyrics version {nxt + 1} of {len(result)} (remembered for this song)", "info", 2500)
 
     def open_settings(self):
         if self.settings_dlg is None:
@@ -383,6 +386,7 @@ class Controller(QObject):
             self.settings_dlg.update_requested.connect(self.start_update)
             self.settings_dlg.tap_sync_requested.connect(self.open_tap_sync)
             self.settings_dlg.lyrics_folder_requested.connect(self.open_lyrics_folder)
+            self.settings_dlg.set_preview_source(self.overlay.grab)
             self._show_update_status()
         self.settings_dlg.show()
         self.settings_dlg.raise_()
@@ -395,8 +399,7 @@ class Controller(QObject):
     def open_tap_sync(self):
         st = self.track
         if not (st and st.title):
-            self.tray.showMessage(APP_NAME, "Play the song you want to sync first.",
-                                  QSystemTrayIcon.MessageIcon.Information, 3000)
+            self.notify("Play the song you want to sync first.", "info", 3000)
             return
         res = self._last_result
         ly = self.overlay.lyrics
@@ -410,9 +413,8 @@ class Controller(QObject):
             lines = lines_for_tapping(res.synced if res else None, res.plain if res else None)
             times = []
         if not lines:
-            self.tray.showMessage(APP_NAME, "There are no lyrics to sync for this song. You can put your own "
-                                  "file in the lyrics folder (tray → Open my lyrics folder).",
-                                  QSystemTrayIcon.MessageIcon.Information, 6000)
+            self.notify("There are no lyrics to sync for this song. You can put your own "
+                                  "file in the lyrics folder (tray → Open my lyrics folder).", "info", 6000)
             return
         from .tap_sync import TapSyncDialog
         restart = (lambda: self.watcher.request("restart")) if not self.demo else None
@@ -459,8 +461,7 @@ class Controller(QObject):
         if self.track and self.track.title == title:
             self._song_offset_ms = 0
             self._fetch(self.track)
-        self.tray.showMessage(APP_NAME, f"Saved your timing for {title}. It's used from now on.",
-                              QSystemTrayIcon.MessageIcon.Information, 4000)
+        self.notify(f"Saved your timing for {title}. It's used from now on.", "info", 4000)
 
     # ------------------------------------------------------------ updates
     def check_updates(self, silent: bool = True):
@@ -484,15 +485,13 @@ class Controller(QObject):
         if isinstance(result, Exception):
             log.info("Update check failed: %s", result)
             if not silent:
-                self.tray.showMessage(APP_NAME, "Couldn't check for updates – are you online?",
-                                      QSystemTrayIcon.MessageIcon.Warning, 3000)
+                self.notify("Couldn't check for updates – are you online?", "warning", 3000)
             self._show_update_status("Couldn't check for updates right now.")
             return
         self.update_info = result
         if result is None:
             if not silent:
-                self.tray.showMessage(APP_NAME, f"You're up to date (version {APP_VERSION}).",
-                                      QSystemTrayIcon.MessageIcon.Information, 3000)
+                self.notify(f"You're up to date (version {APP_VERSION}).", "info", 3000)
             self._show_update_status()
             return
         self.act_update.setText(f"Update to version {result.version}")
@@ -501,10 +500,8 @@ class Controller(QObject):
         if self._announced_version != result.version or not silent:
             self._announced_version = result.version
             new = updater.whats_new(result)
-            self.tray.showMessage(APP_NAME, f"Version {result.version} is available"
-                                  + (f": {new}" if new else "") +
-                                  "\nRight-click the tray icon → Update, or click here.",
-                                  QSystemTrayIcon.MessageIcon.Information, 10000)
+            self.notify(f"Version {result.version} is available"
+                        + (f": {new}" if new else "") + "\nClick to update now.", "info", 12000, action="Update now")
 
     def _show_update_status(self, text: str | None = None):
         if not self.settings_dlg:
@@ -523,13 +520,12 @@ class Controller(QObject):
         if mode != "installed":
             # the portable zip / source version can't replace itself: open the download page instead
             QDesktopServices.openUrl(QUrl(info.page_url))
-            self.tray.showMessage(APP_NAME, "This copy wasn't installed with the installer, so it can't update "
-                                  "itself. The download page has been opened.", QSystemTrayIcon.MessageIcon.Information, 6000)
+            self.notify("This copy wasn't installed with the installer, so it can't update "
+                                  "itself. The download page has been opened.", "info", 6000)
             return
         self._update_busy = True
         self._show_update_status(f"Downloading version {info.version}…")
-        self.tray.showMessage(APP_NAME, f"Downloading version {info.version}…",
-                              QSystemTrayIcon.MessageIcon.Information, 3000)
+        self.notify(f"Downloading version {info.version}…", "info", 3000)
 
         def work():
             try:
@@ -544,18 +540,16 @@ class Controller(QObject):
         if isinstance(result, Exception):
             self._update_busy = False
             log.warning("Update download failed: %s", result)
-            self.tray.showMessage(APP_NAME, f"Update failed: {result}", QSystemTrayIcon.MessageIcon.Warning, 6000)
+            self.notify(f"Update failed: {result}", "warning", 6000)
             self._show_update_status("Update failed – try again later.")
             return
         log.info("Installing update from %s", result)
-        self.tray.showMessage(APP_NAME, "Installing the update – the overlay will restart in a few seconds.",
-                              QSystemTrayIcon.MessageIcon.Information, 4000)
+        self.notify("Installing the update – the overlay will restart in a few seconds.", "info", 4000)
         try:
             updater.launch_installer(result)
         except Exception as e:
             self._update_busy = False
-            self.tray.showMessage(APP_NAME, f"Couldn't start the installer: {e}",
-                                  QSystemTrayIcon.MessageIcon.Warning, 6000)
+            self.notify(f"Couldn't start the installer: {e}", "warning", 6000)
             return
         QTimer.singleShot(1200, self.quit)       # get out of the installer's way
 
@@ -567,6 +561,10 @@ class Controller(QObject):
 
     def _settings_changed(self):
         before = self.s.fixed_height
+        if self.s.popup_style == "app":
+            style_menu(self.menu)
+        else:
+            self.menu.setStyleSheet("")
         self.act_click.setChecked(self.s.click_through)
         self.act_show.setChecked(self.s.visible)
         if not self.demo:
@@ -746,7 +744,7 @@ class Controller(QObject):
         if key in self._warned:
             return
         self._warned.add(key)
-        self.tray.showMessage(APP_NAME, text, QSystemTrayIcon.MessageIcon.Warning, 6000)
+        self.notify(text, "warning", 6000)
 
     def _on_extras(self, token: int, result):
         if token != self.fetch_token:

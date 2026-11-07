@@ -99,7 +99,10 @@ jobs:
           "Windows: $([System.Environment]::OSVersion.VersionString) | Transparency effects before: $before" | Tee-Object -FilePath ci-glass-info.txt
           # the test runs below: frosted with transparency OFF (should fall back) and ON (should blur)
           $shots = [ordered]@{
-            "sanity" = @{ song = "1"; at = 6; grab = $false; s = @{ theme = "Neon"; time_display = "left" } }
+            "design-classic" = @{ song = "1";  at = 6; grab = $false; s = @{ design = "classic"; show_album_art = $true; time_display = "left"; show_progress = $true } }
+            "design-aurora"  = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "aurora"; show_album_art = $true; time_display = "left"; show_progress = $true; translate_enabled = $true } }
+            "design-hud"     = @{ song = "1";  at = 6; grab = $false; s = @{ design = "hud"; show_album_art = $false; time_display = "elapsed"; show_progress = $true } }
+            "design-spotify" = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; match_album_highlight = $true } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
@@ -134,6 +137,15 @@ jobs:
           "saved: $($file.Name)" | Tee-Object -FilePath ci-tap-check.txt
           Get-Content $file.FullName | Tee-Object -FilePath ci-tap-check.txt -Append
           if (-not (Test-Path demo-overlay-tap-window.png)) { throw "no picture of the sync window" }
+
+      - name: Pictures of the Settings window and a pop-up
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          foreach ($what in "settings", "toast") {
+            $p = Start-Process $exe -ArgumentList "--demo","--demo-start","6","--ui-shot",$what,"$PWD\demo-overlay-ui-$what.png","--quit-after","4.5" -PassThru
+            $null = $p.WaitForExit(60000)
+            if (-not (Test-Path "demo-overlay-ui-$what.png")) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 30; throw "no picture of $what" }
+          }
 
       - name: Build installer (Inno Setup)
         run: |
