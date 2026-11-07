@@ -111,6 +111,27 @@ def heard_tokens(words: list[Heard]) -> list[tuple[str, float, float]]:
     return out
 
 
+def fix_stretched(words: list[Heard]) -> list[Heard]:
+    """Whisper often stretches the first word after a pause back to the end of the word
+    before it ("Every" said at 7.4 s gets 4.5-7.6 s). Its END is still right, so give such
+    words a normal length for this singer, ending where Whisper said they end."""
+    def size(w):
+        t = norm_word(w.text)
+        return max(1, len(t) * (3 if has_cjk(t) else 1))
+    rates = sorted((w.end - w.start) / size(w) for w in words if 0.03 < w.end - w.start < 1.0)
+    rate = rates[len(rates) // 2] if rates else 0.07
+    rate = min(max(rate, 0.04), 0.2)
+    out = []
+    for w in words:
+        typical = max(rate * size(w) + 0.05, 0.15)
+        dur = w.end - w.start
+        if dur > 0.6 and dur > 2.0 * typical:
+            out.append(Heard(w.text, w.end - typical, w.end))
+        else:
+            out.append(w)
+    return out
+
+
 @dataclass
 class AlignResult:
     starts: list            # new start time for every line (None for empty lines without a time)
@@ -140,7 +161,7 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
                 line_tok[i].append(len(lyr))
                 owner.append((i, -1 if cjk else wi))
                 lyr.append(t)
-    ht = heard_tokens(heard)
+    ht = heard_tokens(fix_stretched(heard))
     hear = [t for t, _, _ in ht]
 
     anchors: dict[int, tuple[float, float]] = {}
@@ -625,7 +646,7 @@ def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store
                           max_error=round(max(errs), 2) if errs else None,
                           mean_error=round(sum(errs) / len(errs), 2) if errs else None,
                           starts=[round(x, 2) if x is not None else None for x in res.starts], truth=truth)
-        report["ok"] = bool(text) and report.get("max_error") is not None and report["max_error"] < 1.0
+        report["ok"] = bool(text) and report.get("max_error") is not None and report["max_error"] < 0.8
     except Exception as e:
         log.exception("AI test failed")
         report.update(ok=False, error=repr(e))

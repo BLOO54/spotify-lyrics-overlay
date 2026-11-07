@@ -84,3 +84,14 @@ def test_recording_segments():
     r.add(f, 10.5); r.add(f, 11.0); r.add(f, 30.5)      # jump -> new piece
     assert len(r.segments) == 2 and abs(r.segments[0].start - 10.0) < 1e-6
     assert abs(r.covered() - 1.5) < 1e-6
+
+
+def test_stretched_first_word_is_fixed():
+    from app.ai_sync import fix_stretched
+    # what Whisper really reported on Windows for line 2 of the CI test song (truth 7.4 s)
+    words = [Heard("go", 4.22, 4.50), Heard("Every", 4.50, 7.64), Heard("pixel", 7.64, 8.00),
+             Heard("burning", 8.00, 8.38), Heard("bright", 8.38, 8.80), Heard("the", 3.20, 3.36),
+             Heard("line", 3.36, 3.60)]
+    fixed = fix_stretched(words)
+    assert abs(fixed[1].start - 7.4) < 0.35 and fixed[1].end == 7.64
+    assert fixed[2].start == 7.64          # normal words untouched
