@@ -726,12 +726,15 @@ class Controller(QObject):
             return
         self._media_available = True
 
+        changed = st.track_key != self.track_key
+        if changed:
+            self._pos_before_change = (self.clock.position(), self.clock.playing)
         self.clock.update(PlaybackReport(st.position, st.playing, st.last_updated, st.duration))
         self.overlay.playing = st.playing
         self.overlay.duration = st.duration
-        if st.track_key != self.track_key:
+        if changed:
             self._one_song_track_changed(st)
-            self._ai_finish()
+            self._ai_finish(on_change=True)
             self.overlay.set_ai_note("")          # the 1-second AI timer shows any AI progress again
             self.track_key = st.track_key
             self.track = st
@@ -924,11 +927,31 @@ class Controller(QObject):
         if self.clock.position() >= rec.duration - 2.0:
             self._ai_finish()
 
-    def _ai_finish(self):
+    def _crossfade_tail(self, rec) -> float:
+        """The song changed: if that happened in the last seconds of it (Spotify's Crossfade starts
+        the next song early), how many seconds of the end are still playing underneath. 0 = none."""
+        pos, playing = getattr(self, "_pos_before_change", (0.0, False))
+        left = (rec.duration or 0) - pos
+        if not playing or not rec.duration or not (0.8 < left <= 20.0):
+            return 0.0
+        return left
+
+    def _ai_finish(self, on_change: bool = False):
         ctx, self._ai_ctx = self._ai_ctx, None
         rec = self.ai_listener.take() if self.ai_listener is not None else None
         if ctx is None or rec is None or rec.key != ctx[0]:
             return
+        left = self._crossfade_tail(rec) if on_change else 0.0
+        if left:
+            pos = self._pos_before_change[0]
+            log.info("AI sync: next song started %.1f s before %s ended (Spotify Crossfade?) - "
+                     "still listening to its end", left, ctx[2])
+            self.ai_listener.start_tail(rec, pos, rec.duration - 0.2)
+            QTimer.singleShot(int(left * 1000) + 700, lambda: self._ai_submit(ctx, rec))
+            return
+        self._ai_submit(ctx, rec)
+
+    def _ai_submit(self, ctx, rec):
         key, title, artist, lines, orig = ctx
         heard = rec.covered()
         need = (0.35 if orig else 0.8) * (rec.duration or 0)
@@ -1254,6 +1277,8 @@ class Controller(QObject):
             self.notify(f"The AI already heard every line of “{title}”.", "info", 4000)
             return False
         secs = sum(b - a for a, b in plan)
+        log.info("missed parts of %s - %s: %d/%d lines heard so far, will play %s", artist, title,
+                 res.matched_lines, res.lyric_lines, ", ".join(f"{a:.1f}-{b:.1f} s" for a, b in plan))
         self._one_song = {"title": title, "artist": artist, "state": "waiting", "mode": "missed",
                           "path": path, "plan": plan, "i": 0, "details": d,
                           "note": f"{len(plan)} part{'s' if len(plan) != 1 else ''} to listen to "
@@ -1268,6 +1293,7 @@ class Controller(QObject):
         return True
 
     def _patch_jump(self, seconds: float):
+        log.info("missed parts: jumping Spotify to %.1f s", seconds)
         if not self.demo:
             self.watcher.request(f"seek:{seconds:.2f}")
             self.watcher.request("play")
@@ -1276,6 +1302,8 @@ class Controller(QObject):
             self._one_song["jumped"] = _time.monotonic()
         if self.ai_listener is not None:
             self.ai_listener.hold(0.9)          # Spotify may still be playing the old spot for a moment
+            if self.ai_listener.peek() is None and self._one_song and self._one_song.get("key"):
+                self.ai_listener.arm(self._one_song["key"], self.track.duration if self.track else 0.0)
 
     def _patch_begin(self, st):
         one = self._one_song
@@ -1314,6 +1342,16 @@ class Controller(QObject):
         if not self.demo:
             self.watcher.request("pause")
         rec = self.ai_listener.take() if self.ai_listener is not None else None
+        self._patch_submit(rec)
+
+    def _patch_submit(self, rec, pause: bool = False):
+        one = self._one_song
+        if one is None or one.get("mode") != "missed":
+            return
+        if pause and not self.demo:
+            self.watcher.request("pause")
+        log.info("missed parts: done listening (%s)", "nothing recorded" if rec is None else
+                 ", ".join(f"{s.start:.1f}-{s.start + s.seconds:.1f} s" for s in rec.segments))
         one["state"] = "processing"
         one["note"] = "Done listening – Spotify paused. The AI is working on the missed parts…"
         if rec is None or not rec.segments:
@@ -1358,10 +1396,15 @@ class Controller(QObject):
         p = Path(session["path"])
         p.write_text(text, encoding="utf-8")
         d = session["details"]
-        ai_sync.save_details(p, d.get("lines") or [], res, d.get("orig"))
+        import datetime as _dt
+        last = {"message": msg, "lines": len(res.new_lines), "words": res.new_words, "new": res.new_lines,
+                "now": res.matched_lines, "total": res.lyric_lines,
+                "when": _dt.datetime.now().strftime("%Y-%m-%d %H:%M")}
+        ai_sync.save_details(p, d.get("lines") or [], res, d.get("orig"), {"last_patch": last})
+        log.info("missed parts of %s: %s (now %d/%d lines)", title, msg, res.matched_lines, res.lyric_lines)
+        self._last_patch = {"title": title, **last}
         self.notify(f"Missed parts of “{title}”: {msg} (now {res.matched_lines}/{res.lyric_lines} lines). "
-                    "Spotify stays paused.", "success" if "more" in msg and "didn't" not in msg else "info",
-                    6000, keep=True)
+                    "Spotify stays paused.", "success" if res.new_lines else "info", 8000, keep=True)
         if self.track and self.track.title == title:
             self._fetch(self.track)
         self._refresh_synced()
@@ -1382,6 +1425,32 @@ class Controller(QObject):
             if one["state"] == "waiting":
                 self._one_song_begin(st)
         elif one["state"] == "syncing":
+            pos, playing = getattr(self, "_pos_before_change", (0.0, False))
+            dur = (self.track.duration if self.track else 0) or 0
+            left = dur - pos if (playing and dur) else 0
+            if 0 < left <= 20.0:
+                # Spotify's Crossfade started the next song while this one's end still plays underneath
+                log.info("one song: next song started %.1f s before the end - listening to the end, then pausing",
+                         left)
+                if one.get("mode") == "missed":
+                    rec = self.ai_listener.take() if self.ai_listener is not None else None
+                    if rec is not None:
+                        end = min(one["plan"][min(one["i"], len(one["plan"]) - 1)][1], dur - 0.2)
+                        self.ai_listener.start_tail(rec, pos, end)
+                        one["state"] = "processing"
+                        one["note"] = "Spotify's Crossfade started the next song – listening to the last bit…"
+                        QTimer.singleShot(int(max(0.0, end - pos) * 1000) + 700,
+                                          lambda: self._patch_submit(rec, pause=True))
+                        self._refresh_ai_window()
+                        return
+                else:
+                    one["paused"] = True
+                    one["state"] = "processing"
+                    one["note"] = "Song finished – the AI is working out the timing…"
+                    QTimer.singleShot(int(left * 1000) + 700,
+                                      lambda: None if self.demo else self.watcher.request("pause"))
+                    return
+            log.info("one song: another song started before it finished (%.0f s left)", left)
             one["state"] = "waiting"
             one["note"] = "Another song started before it finished – press play on it again to sync it."
             if one.get("mode") == "missed" and self.ai_listener is not None:
@@ -1516,6 +1585,16 @@ class Controller(QObject):
             need.append((False, lis.error))
         if s.ai_second_pass:
             need.append((True, "Second listen for missed parts is on"))
+        try:
+            from .spotify_prefs import crossfade_seconds
+            xf = crossfade_seconds()
+        except Exception:
+            xf = None
+        if xf:
+            need.append((False, f"Spotify's Crossfade is on ({xf:.0f} s): the next song starts while the last "
+                                f"{xf:.0f} s of a song still play, so the AI hears the end mixed with the next "
+                                "song. For the best endings, turn it off in Spotify → Settings → Playback → "
+                                "Crossfade songs."))
         if s.ai_vocals:
             ok_v = self.ai_store.installed("vocals")
             need.append((ok_v, "Vocal separation is on" if ok_v else
@@ -1529,6 +1608,7 @@ class Controller(QObject):
         for e in songs:
             e["details"] = ai_sync.load_details(Path(e["path"]))
         return {"one_song": dict(self._one_song) if self._one_song else None,
+                "last_patch": getattr(self, "_last_patch", None),
                 "enabled": s.ai_sync_enabled, "model": f"{label} ({size})", "installed": installed,
                 "threads": s.ai_threads, "now": now, "need": need, "working": working,
                 "recent": list(self._recent_ai[:20]), "songs": songs}

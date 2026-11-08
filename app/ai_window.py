@@ -299,6 +299,14 @@ class AiSyncWindow(QWidget):
         else:
             self.one_cancel.setVisible(False)
             self.one_go.setEnabled(self.one_pick.count() > 0)
+            lp = snap.get("last_patch")
+            if lp and lp is not getattr(self, "_shown_patch", None):
+                self._shown_patch = lp
+                col = "#4ade80" if lp.get("lines") else "#fbbf24"
+                self.one_status.setText(
+                    f"<span style='color:{col}'>Done listening to the missed parts of "
+                    f"<b>{html.escape(lp['title'])}</b>: {html.escape(lp['message'])}</span> – now "
+                    f"{lp['now']}/{lp['total']} lines. New lines are marked NEW in the list below.")
             self.missed_btn.setEnabled(True)
         self._fill_songs(snap)
 
@@ -368,11 +376,17 @@ class AiSyncWindow(QWidget):
             return
         rows = []
         missed = 0
-        for text, heard in zip(d["lines"], d["heard"] + [False] * (len(d["lines"]) - len(d["heard"]))):
+        lp = d.get("last_patch") or {}
+        new = set(lp.get("new") or [])
+        for n, (text, heard) in enumerate(zip(d["lines"], d["heard"] + [False] * (len(d["lines"]) - len(d["heard"])))):
             if not text.strip():
                 rows.append("<tr><td colspan='2' height='8'></td></tr>")
                 continue
-            if heard:
+            if heard and n in new:
+                rows.append(f"<tr><td width='26' style='color:#4ade80'>✔</td>"
+                            f"<td style='color:#d6d6e2'>{html.escape(text)} "
+                            f"<span style='color:#4ade80; font-weight:700'>&nbsp;NEW</span></td></tr>")
+            elif heard:
                 rows.append(f"<tr><td width='26' style='color:#4ade80'>✔</td>"
                             f"<td style='color:#d6d6e2'>{html.escape(text)}</td></tr>")
             else:
@@ -382,4 +396,8 @@ class AiSyncWindow(QWidget):
         summary = (f"<p style='color:#c4b5fd'>Missed {missed} line{'s' if missed != 1 else ''} – those were timed "
                    "from the lines around them (or the website's timing).</p>" if missed else
                    "<p style='color:#4ade80'>The AI heard every line.</p>")
+        if lp:
+            col = "#4ade80" if lp.get("lines") else "#fbbf24"
+            summary = (f"<p style='color:{col}'>Last “listen to missed parts” ({html.escape(lp.get('when', ''))}): "
+                       f"{html.escape(lp.get('message', ''))}.</p>") + summary
         self.lines.setHtml(head + summary + "<table cellspacing='0' cellpadding='3'>" + "".join(rows) + "</table>")

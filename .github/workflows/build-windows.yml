@@ -199,7 +199,7 @@ jobs:
           python tools/make_ai_test_song.py $dir hard
           Copy-Item "$dir\hard.wav" ci-ai-hard-song.wav
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
-          $runs = [ordered]@{ "normal" = ""; "second" = "second"; "vocals" = "vocals"; "both" = "second,vocals" }
+          $runs = [ordered]@{ "normal" = ""; "second" = "second"; "vocals" = "vocals"; "both" = "second,vocals"; "patch" = "patch" }
           $summary = @()
           foreach ($name in $runs.Keys) {
             $out = "$PWD\ci-ai-hard-$name.json"

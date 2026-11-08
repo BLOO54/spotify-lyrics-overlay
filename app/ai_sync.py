@@ -150,8 +150,36 @@ def _similar(a: str, b: str) -> float:
     return 0.6 if r >= 0.8 else 0.0
 
 
+_SOUND = str.maketrans("aeiouyhw", "        ")
+
+
+def _sound_key(w: str) -> str:
+    """Roughly how a word sounds: first letter + consonants (so 'nothin' ~ 'nothing', 'gonna' ~ 'gona')."""
+    w = w.replace("ph", "f").replace("ck", "k").replace("qu", "kw").replace("z", "s").replace("x", "ks")
+    if w.endswith("ing"):
+        w = w[:-3] + "in"
+    rest = w[1:].translate(_SOUND).replace(" ", "")
+    out = w[:1]
+    for ch in rest:
+        if not out.endswith(ch):
+            out += ch
+    return out
+
+
+def _similar_loose(a: str, b: str) -> float:
+    """For the parts the AI is told to listen for: also accept words that only sound alike."""
+    s = _similar(a, b)
+    if s or has_cjk(a) or has_cjk(b) or min(len(a), len(b)) < 3:
+        return s
+    from difflib import SequenceMatcher as _SM
+    if _sound_key(a) == _sound_key(b) or _SM(None, a, b).ratio() >= 0.66:
+        return 0.5
+    return 0.0
+
+
 def align_tokens(lyr: list[str], heard: list[tuple[str, float]], expect: list | None = None,
-                 window: float = 60.0) -> list[tuple[int, int]]:
+                 window: float = 60.0, loose: list | None = None,
+                 loose_span: tuple | None = None) -> list[tuple[int, int]]:
     """Line the lyric words up with the heard words over the WHOLE song at once, keeping both in
     order (like lining up two DNA strands). Unlike "find the longest identical stretch first",
     a chorus that repeats word for word can't get paired with the wrong repeat. When the
@@ -180,7 +208,12 @@ def align_tokens(lyr: list[str], heard: list[tuple[str, float]], expect: list | 
             if alt > best:
                 best, how = alt, 2
             hw, ht_ = heard[j - 1]
-            sim = 1.0 if hw == w else (_similar(w, hw) if hw[:1] == w[:1] or len(w) > 4 else 0.0)
+            if hw == w:
+                sim = 1.0
+            elif loose is not None and loose[i - 1] and loose_span[0] <= ht_ < loose_span[1]:
+                sim = _similar_loose(w, hw)
+            else:
+                sim = _similar(w, hw) if hw[:1] == w[:1] or len(w) > 4 else 0.0
             if sim > 0:
                 score = 2.0 * sim
                 if e is not None:
@@ -225,6 +258,9 @@ class AlignResult:
     coverage: float         # share of lyric words the AI heard
     heard: list = field(default_factory=list)   # per line: True = the AI heard it, False = timing was filled in
     words: list = field(default_factory=list)   # what the AI heard: (word, start, end) - kept so it can re-match
+    matched_words: int = 0                      # lyric words matched to something the AI heard
+    new_lines: list = field(default_factory=list)   # after "listen to missed parts": lines it newly heard
+    new_words: int = 0                              # ... and how many more lyric words it matched
 
     @property
     def quality(self) -> float:
@@ -232,8 +268,10 @@ class AlignResult:
 
 
 def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
-          max_shift: float = 150.0) -> AlignResult:
-    """Match the heard words to the lyric lines and work out when each line starts."""
+          max_shift: float = 150.0, focus: tuple | None = None) -> AlignResult:
+    """Match the heard words to the lyric lines and work out when each line starts.
+    focus = (line numbers, (from, to) seconds): lines the AI was specifically told to listen for
+    there - words that only sound alike count for them."""
     n = len(lines)
     # lyric tokens, remembering which line / which word of the line each one came from
     lyr: list[str] = []
@@ -257,7 +295,12 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
                 for k, t in enumerate(line_tok[i]):
                     expect[t] = orig_starts[i] + 0.3 * k
     anchors: dict[int, tuple[float, float]] = {}
-    for a, b in align_tokens(lyr, [(t, s_) for t, s_, _ in ht], expect):
+    loose = None
+    if focus:
+        want = set(focus[0])
+        loose = [owner[k][0] in want for k in range(len(lyr))]
+    for a, b in align_tokens(lyr, [(t, s_) for t, s_, _ in ht], expect,
+                             loose=loose, loose_span=focus[1] if focus else None):
         anchors[a] = (ht[b][1], ht[b][2])
 
     starts: list = [None] * n
@@ -274,8 +317,15 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
             continue
         k0, (t0, _) = hit[0]
         if k0 > 2:
-            continue           # the start of the line wasn't heard
-        s = max(0.0, t0 - 0.22 * k0)
+            # the start wasn't heard - fine if plenty of the rest was: work back from how fast it's sung
+            if len(hit) < 3 or len(hit) < 0.4 * len(toks):
+                continue
+            k1, (t1_, _) = hit[-1]
+            per = (t1_ - t0) / max(k1 - k0, 1)
+            per = min(max(per, 0.15), 0.6)
+            s = max(0.0, t0 - per * k0)
+        else:
+            s = max(0.0, t0 - 0.22 * k0)
         starts[i] = s
         ends[i] = hit[-1][1][1] if hit[-1][0] >= len(toks) - 2 else None
         matched += 1
@@ -327,7 +377,7 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
                   if words_t[i] else None for i in range(n)]
     coverage = len(anchors) / max(len(lyr), 1)
     return AlignResult(starts, word_times, ends, matched, lyric_lines, coverage, heard_flags,
-                       [(w.text, round(w.start, 2), round(w.end, 2)) for w in heard])
+                       [(w.text, round(w.start, 2), round(w.end, 2)) for w in heard], len(anchors))
 
 
 def _next_start(starts, i):
@@ -450,13 +500,14 @@ def details_path(lrc_path: Path) -> Path:
     return lrc_path.with_suffix(".ai.json")
 
 
-def save_details(lrc_path: Path, lines: list[str], res: AlignResult, orig_starts: list | None = None) -> None:
+def save_details(lrc_path: Path, lines: list[str], res: AlignResult, orig_starts: list | None = None,
+                 extra: dict | None = None) -> None:
     """Next to an AI-synced song: which lines the AI heard and which it had to fill in, plus the
     words it heard (a few KB) so the song can be matched again later without listening again."""
     try:
         data = {"lines": [ln for ln in lines], "heard": [bool(h) for h in res.heard],
                 "matched": res.matched_lines, "total": res.lyric_lines,
-                "words": [list(w) for w in res.words], "orig": orig_starts}
+                "words": [list(w) for w in res.words], "orig": orig_starts, **(extra or {})}
         details_path(lrc_path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         log.exception("could not save AI sync details")
@@ -700,6 +751,7 @@ class Listener:
         self.app_note = ""               # why app-only isn't used, if it isn't
         self._probed: dict[int, dict] = {}
         self._hold_until = 0.0           # ignore sound until then (just after Spotify was told to jump)
+        self._tail = None                # (recording, song position, clock time, end) - see start_tail
         self.recording: Recording | None = None
         self.error: str | None = None
         self._lock = threading.Lock()
@@ -717,6 +769,16 @@ class Listener:
     def hold(self, seconds: float):
         """Ignore the sound for a moment - right after a jump, Spotify may still be playing the old spot."""
         self._hold_until = time.monotonic() + seconds
+
+    def start_tail(self, rec: Recording, position: float, end: float):
+        """Spotify's Crossfade starts the next song while the last seconds of this one still play
+        (mixed together). Keep adding those seconds to this song's recording, at the time they'd have."""
+        with self._lock:
+            self._tail = (rec, position, time.monotonic(), end)
+        self._wake.set()
+
+    def tail_active(self) -> bool:
+        return self._tail is not None
 
     def take(self) -> Recording | None:
         with self._lock:
@@ -743,7 +805,7 @@ class Listener:
             self._wake.clear()
             if self._quit:
                 return
-            if self.recording is None:
+            if self.recording is None and self._tail is None:
                 continue
             pid = None
             try:
@@ -794,16 +856,25 @@ class Listener:
         checks = 0
         while not self._quit:
             r = self.recording
-            if r is None:
+            if r is None and self._tail is None:
                 return
             data = read(int(SAMPLE_RATE * FRAME_SECONDS))
+            frame = np.asarray(data, dtype=np.float32).reshape(-1).copy()
+            tail = self._tail
+            if tail is not None:                # the end of the last song, still fading out
+                trec, p0, m0, end = tail
+                p = p0 + (time.monotonic() - m0)
+                if p <= end + 0.3:
+                    trec.add(frame, min(p, end))
+                else:
+                    self._tail = None
             key, pos, playing = self.get_state()
-            if r is not self.recording:
+            if r is None or r is not self.recording:
                 continue
             if key != r.key or not playing or time.monotonic() < self._hold_until:
                 r.gap()
             elif r.seconds <= MAX_RECORD_SECONDS:
-                r.add(np.asarray(data, dtype=np.float32).reshape(-1).copy(), pos)
+                r.add(frame, pos)
             checks += 1
             if checks % 10 == 0 and not still_ok():
                 log.info("AI sync: sound source changed - switching")
@@ -818,7 +889,8 @@ def load_whisper(model_dir: Path, threads: int = 2):
 
 
 def transcribe(model, audio, language: str | None = None, prompt: str | None = None,
-               threads: int = 2, progress=None, parts: list | None = None) -> list[Heard]:
+               threads: int = 2, progress=None, parts: list | None = None,
+               hotwords: str | None = None) -> list[Heard]:
     """Run speech recognition on 16 kHz mono float audio; returns every word with its time.
     `model` is a loaded model (load_whisper) or a model folder."""
     own = isinstance(model, (str, Path))
@@ -828,11 +900,17 @@ def transcribe(model, audio, language: str | None = None, prompt: str | None = N
         extra = {}
         if parts:                          # voice-only audio: only listen where someone is singing
             extra = {"clip_timestamps": [x for ab in parts for x in ab], "hallucination_silence_threshold": 2.0}
-        segments, info = model.transcribe(
-            audio, language=language, word_timestamps=True, vad_filter=False,
-            condition_on_previous_text=False, initial_prompt=prompt, beam_size=5,
-            no_speech_threshold=None,      # never skip a part just because the music is louder than the voice
-            **extra)
+        if hotwords:                       # words it should expect to hear (makes them easier to catch)
+            extra["hotwords"] = hotwords
+        kw = dict(language=language, word_timestamps=True, vad_filter=False,
+                  condition_on_previous_text=False, initial_prompt=prompt, beam_size=5,
+                  no_speech_threshold=None,      # never skip a part just because the music is louder than the voice
+                  **extra)
+        try:
+            segments, info = model.transcribe(audio, **kw)
+        except TypeError:                  # an older speech library without "hotwords"
+            kw.pop("hotwords", None)
+            segments, info = model.transcribe(audio, **kw)
         words: list[Heard] = []
         total = max(len(audio) / SAMPLE_RATE, 0.1)
         for seg in segments:
@@ -899,6 +977,30 @@ def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store
                           starts=[round(x, 2) if x is not None else None for x in res.starts], truth=truth)
         if res is not None:
             report["missed"] = [ln.text for ln, h in zip(parsed, res.heard) if ln.text.strip() and not h]
+        if res is not None and "patch" in opts:
+            # pretend the first listen missed the middle of the song, then use "listen to missed parts"
+            dur = len(audio) / SAMPLE_RATE
+            gone = (0.3 * dur, 0.65 * dur)
+            kept = [w for w in res.words if not (gone[0] <= w[1] < gone[1])]
+            lines_ = [ln.text for ln in parsed]
+            details = {"lines": lines_, "words": [list(w) for w in kept], "orig": [t + shift for t in truth]}
+            before, plan = plan_missed_parts(details)
+            prec = Recording("test", dur)
+            for a, b in plan:
+                for k in range(int(a * SAMPLE_RATE), min(int(b * SAMPLE_RATE), len(audio)), 8000):
+                    piece = audio[k:min(k + 8000, int(b * SAMPLE_RATE))]
+                    prec.add(piece, (k + len(piece)) / SAMPLE_RATE)
+                prec.gap()
+            t2 = time.time()
+            ptext, pres, pmsg = patch_job(details, prec, store.path(model), "CI song", "CI")
+            perrs = [abs(a - b) for a, b, ln, h in zip(pres.starts, truth, parsed, pres.heard)
+                     if ln.text.strip() and a is not None and h]
+            report.update(patch_before=before.matched_lines, patch_after=pres.matched_lines, patch_msg=pmsg,
+                          patch_plan=[[round(a, 1), round(b, 1)] for a, b in plan],
+                          patch_s=round(time.time() - t2, 1), patch_new_words=pres.new_words,
+                          patch_max_error=round(max(perrs), 2) if perrs else None)
+            report["message"] = (f"missed-parts listen: {before.matched_lines} -> {pres.matched_lines} lines, "
+                                 f"{pmsg}, worst {report['patch_max_error']} s, {report['patch_s']} s")
         report["ok"] = bool(text) and report.get("max_error") is not None and report["max_error"] < 0.8
     except Exception as e:
         log.exception("AI test failed")
@@ -1112,50 +1214,100 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
     return to_lrc(job.lines, res, job.title, job.artist, note), res, note
 
 
-def repair(lines, orig, heard, res, sources, model, lang, threads, progress=None):
+def _hint_for(lines, res, idxs):
+    """What to tell the AI it's about to hear: the line before (for context) and the missed lines,
+    plus their less common words as 'hotwords'."""
+    prev = next((lines[k] for k in range(idxs[0] - 1, -1, -1) if lines[k].strip()), "")
+    want = " ".join(lines[i] for i in idxs)
+    prompt = (prev + " " + want).strip()[-220:]
+    seen, hot = set(), []
+    for t in tokens_of(want):
+        if len(t) >= 3 and t not in seen:
+            seen.add(t)
+            hot.append(t)
+    return prompt, " ".join(hot[:30]) or None
+
+
+def _line_spans(lines, res, idxs, t0, t1):
+    """Short stretches, one per missed line (about where it should be), for a closer listen."""
+    out = []
+    for i in idxs:
+        s = res.starts[i]
+        if s is None:
+            continue
+        nxt = _next_start(res.starts, i)
+        e = min(nxt + 0.8 if nxt is not None else s + 6.0, s + 12.0)
+        a, b = max(t0, s - 1.5), min(t1, max(e, s + 3.0))
+        if b - a >= 2.5:
+            out.append((a, b, [i]))
+    return out
+
+
+def repair(lines, orig, heard, res, sources, model, lang, threads, progress=None, thorough: bool = False):
     """Go over the parts where lines weren't matched again, told which lyrics to expect there.
     sources: (name, audio pieces [(song time, samples)], voice_only). Keeps a new result only when
-    it matches MORE lines. Returns (heard words, result, {source name: lines gained})."""
+    it matches MORE lines. thorough: also try each missed line on its own (short clips are easier
+    for the AI). Returns (heard words, result, {source name: lines gained})."""
     from .vocals import voiced_parts
     windows = missed_windows(res, lines)[:24]
     before = res.matched_lines
     gains = {name: 0 for name, _, _ in sources}
-    steps = max(len(windows) * len(sources), 1)
+    steps = max(len(windows) * len(sources) * (2 if thorough else 1), 1)
     step = 0
+
+    def attempt(name, src, voice_only, t0, t1, idxs, keep_until):
+        nonlocal heard, res
+        clip = _clip(src, t0, t1)
+        if clip is None:
+            return
+        c0, audio = clip
+        span = len(audio) / SAMPLE_RATE
+        parts = None
+        if voice_only:                              # only where someone sings: no words "heard" in silence
+            parts = voiced_parts(audio, SAMPLE_RATE)
+            if not parts:
+                return
+        prompt, hot = _hint_for(lines, res, idxs)
+        try:
+            if hot:
+                again = transcribe(model, audio, lang, prompt, threads, None, parts, hotwords=hot)
+            else:
+                again = transcribe(model, audio, lang, prompt, threads, None, parts)
+        except Exception as e:
+            log.warning("%s failed: %s", name, e)
+            return
+        if not again or len(again) > 7 * max(span, 1.0):        # nonsense (far too many words)
+            return
+        # only the missed part itself is replaced: the clip runs a little into the next (already
+        # heard) line so a late start isn't cut off, but those words are kept from the first listen
+        core_end = min(c0 + span, keep_until)
+        got = [Heard(w.text, w.start + c0, w.end + c0) for w in again if w.start + c0 < core_end]
+        cand = sorted([w for w in heard if not (c0 <= w.start < core_end)] + got, key=lambda w: w.start)
+        res2 = align(lines, cand, orig, focus=(idxs, (c0 - 0.5, core_end + 0.5)))
+        if res2.matched_lines > res.matched_lines:
+            gains[name] += res2.matched_lines - res.matched_lines
+            heard, res = cand, res2
+
     for t0, t1, idxs in windows:
-        hint = " ".join(lines[i] for i in idxs)[:220]
         for name, src, voice_only in sources:
             if progress:
                 progress(step / steps)
             step += 1
             if all(res.heard[i] for i in idxs):
                 break                               # an earlier source already got these lines
-            clip = _clip(src, t0, t1)
-            if clip is None:
-                continue
-            c0, audio = clip
-            span = len(audio) / SAMPLE_RATE
-            parts = None
-            if voice_only:                          # only where someone sings: no words "heard" in silence
-                parts = voiced_parts(audio, SAMPLE_RATE)
-                if not parts:
-                    continue
-            try:
-                again = transcribe(model, audio, lang, hint, threads, None, parts)
-            except Exception as e:
-                log.warning("%s failed: %s", name, e)
-                continue
-            if not again or len(again) > 7 * max(span, 1.0):        # nonsense (far too many words)
-                continue
-            # only the missed part itself is replaced: the window runs a little into the next (already
-            # heard) line so a late start isn't cut off, but those words are kept from the first listen
-            core_end = min(c0 + span, t1 - 1.0)
-            got = [Heard(w.text, w.start + c0, w.end + c0) for w in again if w.start + c0 < core_end]
-            cand = sorted([w for w in heard if not (c0 <= w.start < core_end)] + got, key=lambda w: w.start)
-            res2 = align(lines, cand, orig)
-            if res2.matched_lines > res.matched_lines:
-                gains[name] += res2.matched_lines - res.matched_lines
-                heard, res = cand, res2
+            attempt(name, src, voice_only, t0, t1, idxs, t1 - 1.0)
+        if thorough:
+            for a, b, one in _line_spans(lines, res, [i for i in idxs if not res.heard[i]], t0, t1):
+                for name, src, voice_only in sources:
+                    if res.heard[one[0]]:
+                        break
+                    k = next((j for j in range(one[0] + 1, len(lines)) if lines[j].strip()), None)
+                    nxt = res.starts[k] if k is not None else None
+                    keep = (nxt - 0.2 if res.heard[k] else nxt + 0.3) if nxt is not None else b
+                    attempt(name, src, voice_only, a, b, one, keep)
+            if progress:
+                progress(step / steps)
+            step += len(sources)
     if progress:
         progress(1.0)
     log.info("going over missed parts: %d -> %d lines %s", before, res.matched_lines, gains)
@@ -1204,11 +1356,22 @@ def patch_job(details: dict, recording: Recording, model_dir, title: str, artist
         except Exception as e:
             log.warning("vocal separation didn't work: %s", e)
     lang = whisper_language(lines)
+    was_heard = list(res.heard)
+    words_before = res.matched_words
     heard, res, gains = repair(lines, orig, heard, res, sources, model, lang, threads,
-                               (lambda f: progress(0.1 + 0.9 * f)) if progress else None)
+                               (lambda f: progress(0.1 + 0.9 * f)) if progress else None, thorough=True)
     found = res.matched_lines - before
+    new_words = max(0, res.matched_words - words_before)
+    res.new_lines = [i for i, h in enumerate(res.heard) if h and not (i < len(was_heard) and was_heard[i])]
+    res.new_words = new_words
     note = f"AI heard {res.matched_lines}/{res.lyric_lines} lines"
-    msg = (f"found {found} more line{'s' if found != 1 else ''}" if found else "didn't find any more lines")
+    if found:
+        msg = (f"found {found} more line{'s' if found != 1 else ''} "
+               f"({new_words} new word{'s' if new_words != 1 else ''})")
+    elif new_words:
+        msg = f"caught {new_words} more word{'s' if new_words != 1 else ''}, but no whole new lines"
+    else:
+        msg = "didn't find any more lines"
     return to_lrc(lines, res, title, artist, note), res, msg
 
 

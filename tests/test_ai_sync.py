@@ -205,7 +205,7 @@ def test_run_job_reports_progress(monkeypatch):
     for k in range(80):                           # 40 s of sound in one piece
         rec.add(np.full(8000, 0.1, dtype=np.float32), 0.5 * (k + 1))
 
-    def fake_transcribe(model_dir, audio, lang, prompt, threads, progress=None, parts=None):
+    def fake_transcribe(model_dir, audio, lang, prompt, threads, progress=None, parts=None, **kw):
         for f in (0.25, 0.5, 1.0):
             if progress:
                 progress(f)
@@ -334,7 +334,7 @@ def test_second_listen_finds_missed_lines(monkeypatch):
     truth = [2.0, 8.0, 14.0, 20.0, 26.0, 32.0]
     calls = []
 
-    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None):
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None, **kw):
         calls.append(prompt)
         span = len(audio) / AS.SAMPLE_RATE
         if span > 50:                                   # first listen: the whole song, chorus missed
@@ -436,7 +436,7 @@ def _voice_job(monkeypatch, voice_words):
             clip_start[0] = got[0]
         return got
 
-    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None):
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None, **kw):
         if len(audio) / AS.SAMPLE_RATE > 50:          # first listen of the normal recording
             return [AS.Heard(w, truth[i] + 0.4 * j, truth[i] + 0.4 * j + 0.3)
                     for i in (0, 1, 4, 5) for j, w in enumerate(lines[i].split())]
@@ -514,7 +514,7 @@ def test_patch_job_hears_only_the_missed_parts(monkeypatch):
             clip0[0] = got[0]
         return got
 
-    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None):
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None, **kw):
         want = [i for i in (2, 3, 6) if lines[i] in (prompt or "")]
         return [AS.Heard(w, truth[i] - clip0[0] + 0.4 * j, truth[i] - clip0[0] + 0.4 * j + 0.3)
                 for i in want for j, w in enumerate(lines[i].split())]
@@ -522,6 +522,112 @@ def test_patch_job_hears_only_the_missed_parts(monkeypatch):
     monkeypatch.setattr(AS, "transcribe", fake_transcribe)
     monkeypatch.setattr(AS, "load_whisper", lambda *a, **k: "model")
     text, res, msg = AS.patch_job(details, rec, None, "Song", "Artist")
-    assert res.matched_lines == 8 and msg == "found 3 more lines", (res.matched_lines, msg)
+    assert res.matched_lines == 8 and msg == "found 3 more lines (18 new words)", (res.matched_lines, msg)
+    assert res.new_lines == [2, 3, 6] and res.new_words == 18
     assert abs(res.starts[2] - 14.0) < 0.1 and abs(res.starts[6] - 60.0) < 0.1
     assert "[#:AI heard 8/8 lines]" in text
+
+
+def test_spotify_crossfade_setting():
+    from app.spotify_prefs import parse_crossfade
+    assert parse_crossfade('audio.crossfade_v2=true\naudio.crossfade.time_v2=12000\n') == 12.0
+    assert parse_crossfade('audio.crossfade_v2=false\naudio.crossfade.time_v2=12000\n') == 0.0
+    assert parse_crossfade('audio.crossfade_v2=true\n') == 5.0
+    assert parse_crossfade('ui.zoom=1.2\n') == 0.0
+
+
+def test_line_counts_when_only_its_start_was_missed():
+    from app.ai_sync import Heard, align
+    lines = ["hello there my friend", "a birdbrain baby i don't think my head is coming off", "the end of it all"]
+    heard = [Heard(w, 2.0 + 0.4 * j, 2.3 + 0.4 * j) for j, w in enumerate(lines[0].split())]
+    # the first three words of line 2 weren't heard, the rest was
+    heard += [Heard(w, 10.0 + 0.3 * j, 10.25 + 0.3 * j) for j, w in enumerate("i don't think my head is coming off".split())]
+    heard += [Heard(w, 16.0 + 0.4 * j, 16.3 + 0.4 * j) for j, w in enumerate(lines[2].split())]
+    res = align(lines, heard, [2.0, 9.0, 16.0])
+    assert res.heard == [True, True, True]
+    assert 8.8 < res.starts[1] < 9.4, res.starts[1]       # worked back from how fast it's sung
+
+
+def test_sound_alike_words_count_only_where_it_listened_for_them():
+    from app.ai_sync import Heard, _similar_loose, align
+    assert _similar_loose("nothing", "nothin") > 0 and _similar_loose("achromatic", "acromatic") > 0
+    assert _similar_loose("aeronaut", "argonaut") > 0
+    assert _similar_loose("birdbrain", "chicken") == 0
+    lines = ["one two three four", "achromatic twisted aeronaut", "five six seven eight"]
+    heard = [Heard(w, 2.0 + 0.4 * j, 2.3 + 0.4 * j) for j, w in enumerate(lines[0].split())]
+    heard += [Heard(w, 6.0 + 0.5 * j, 6.4 + 0.5 * j) for j, w in enumerate("akromatik twistering aironot".split())]
+    heard += [Heard(w, 10.0 + 0.4 * j, 10.3 + 0.4 * j) for j, w in enumerate(lines[2].split())]
+    orig = [2.0, 6.0, 10.0]
+    assert align(lines, heard, orig).heard[1] is False            # normally too different
+    assert align(lines, heard, orig, focus=([1], (5.0, 9.0))).heard[1] is True
+    assert align(lines, heard, orig, focus=([1], (20.0, 30.0))).heard[1] is False   # not where it listened
+
+
+def test_missed_parts_tries_each_line_on_its_own(monkeypatch):
+    """A long clip with the whole missed part gives nothing; a short clip of one line works."""
+    import numpy as np
+
+    import app.ai_sync as AS
+    details, lines, truth = _saved_details_missing_chorus()
+    _, plan = AS.plan_missed_parts(details)
+    rec = AS.Recording("k", 80)
+    for a, b in plan:
+        t = a
+        while t < b:
+            rec.add(np.full(8000, 0.1, dtype=np.float32), t + 0.5)
+            t += 0.5
+        rec.gap()
+    clip0 = [0.0]
+    real_clip = AS._clip
+
+    def spy(pieces, t0, t1):
+        got = real_clip(pieces, t0, t1)
+        if got:
+            clip0[0] = got[0]
+        return got
+    hot = []
+
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None, hotwords=None):
+        hot.append(hotwords)
+        if len(audio) / AS.SAMPLE_RATE > 9.5:
+            return [AS.Heard("la", 0.5, 0.8)]                  # too long: the AI hears nothing useful
+        c0 = clip0[0]
+        want = [i for i in (2, 3, 6) if truth[i] - 0.1 <= c0 + 1.6 and c0 < truth[i] + 1]
+        return [AS.Heard(w, truth[i] - c0 + 0.4 * j, truth[i] - c0 + 0.4 * j + 0.3)
+                for i in want for j, w in enumerate(lines[i].split())]
+    monkeypatch.setattr(AS, "_clip", spy)
+    monkeypatch.setattr(AS, "transcribe", fake_transcribe)
+    monkeypatch.setattr(AS, "load_whisper", lambda *a, **k: "model")
+    text, res, msg = AS.patch_job(details, rec, None, "Song", "Artist")
+    assert res.matched_lines == 8, (res.matched_lines, msg, res.heard)
+    assert any(h and "chorus" in h for h in hot)                 # it was told which words to listen for
+
+
+def test_listener_keeps_the_end_of_a_crossfaded_song():
+    import itertools
+    import time
+
+    import numpy as np
+
+    import app.ai_sync as AS
+    lis = AS.Listener.__new__(AS.Listener)
+    import threading
+    lis._lock = threading.Lock(); lis._wake = threading.Event(); lis._quit = False
+    lis._hold_until = 0.0; lis._tail = None
+    old = AS.Recording("old", 20.0)
+    old.add(np.zeros(8000, dtype=np.float32), 15.0)
+    lis.recording = AS.Recording("new", 200.0)
+    lis.get_state = lambda: ("new", 1.0, True)
+    lis.start_tail(old, 15.0, 19.8)
+    t0 = time.monotonic()
+    count = itertools.count()
+
+    def read(n):
+        k = next(count)
+        if k >= 4:
+            lis._quit = True
+        time.sleep(0.05)
+        return np.full(n, 0.2, dtype=np.float32)
+    lis._pump(read, np, lambda: True)
+    assert len(old.segments) == 1 and old.seconds > 1.5         # the end kept going into the old song
+    assert lis.recording.seconds > 1.5                            # and the new song was recorded too
