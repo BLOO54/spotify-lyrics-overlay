@@ -189,6 +189,9 @@ class Controller(QObject):
         self.act_show = QAction("Show overlay", self.menu, checkable=True)
         self.act_show.setChecked(self.s.visible)
         self.act_show.toggled.connect(self.set_visible)
+        self.act_ai = QAction("AI sync", self.menu, checkable=True)
+        self.act_ai.setChecked(self.s.ai_sync_enabled)
+        self.act_ai.toggled.connect(self.set_ai_enabled)
         self.act_click = QAction("Click-through", self.menu, checkable=True)
         self.act_click.setChecked(self.s.click_through)
         self.act_click.toggled.connect(self.set_click_through)
@@ -224,7 +227,7 @@ class Controller(QObject):
                             "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
                             "hk_version": (act_version, "Try another lyrics version")}
         self._label_menu()
-        for a in (self.act_show, self.act_click, act_settings):
+        for a in (self.act_show, self.act_click, self.act_ai, act_settings):
             self.menu.addAction(a)
         self.menu.addSeparator()
         for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
@@ -608,6 +611,8 @@ class Controller(QObject):
             self.menu.setStyleSheet("")
         self.act_click.setChecked(self.s.click_through)
         self.act_show.setChecked(self.s.visible)
+        if self.act_ai.isChecked() != self.s.ai_sync_enabled:
+            self.act_ai.setChecked(self.s.ai_sync_enabled)
         if not self.demo:
             self.watcher.spotify_only = self.s.spotify_only
         self.overlay.apply_settings()
@@ -784,7 +789,7 @@ class Controller(QObject):
         mb = self.ai_store.size_on_disk(name) / 1e6
         bits = [f"{label} model installed ({mb:,.0f} MB)."]
         if not self.s.ai_sync_enabled:
-            bits.append("Turn on \"Use AI sync\" to start.")
+            bits.append("AI sync is off (the model stays installed).")
         elif self.ai_listener is not None and self.ai_listener.error:
             bits.append(f"Problem: {self.ai_listener.error}")
         elif self._ai_jobs:
@@ -957,6 +962,23 @@ class Controller(QObject):
             self.notify(f"AI model download failed: {err}", "warning", 7000)
         self._refresh_ai_status()
 
+    def set_ai_enabled(self, on: bool):
+        """Turn AI sync on / off (the model stays installed)."""
+        if on == self.s.ai_sync_enabled:
+            return
+        self.s.ai_sync_enabled = on
+        self.s.save()
+        if self.settings_dlg is not None:
+            self.settings_dlg.sync_from_settings()
+        self._settings_changed()
+        if not on:
+            self.notify("AI sync off. The model stays installed – turn it back on any time.", "info", 3000)
+        elif not self.ai_store.installed(self.s.ai_model):
+            self.notify("AI sync on. Download a model in Settings → Lyrics & translation so it can learn "
+                        "new songs.", "info", 5000)
+        else:
+            self.notify("AI sync on.", "info", 2000)
+
     def ai_remove(self, name: str):
         if self._ai_download and self._ai_download[0] == name:
             self.ai_cancel_download()
@@ -965,8 +987,8 @@ class Controller(QObject):
             self.ai_listener.take()
         self._ai_ctx = None
         self.ai_store.remove(name)
-        self.notify(f"{ai_sync.MODELS[name][1]} AI model removed. Songs it already synced keep their timing.",
-                    "info", 5000)
+        self.notify(f"{ai_sync.MODELS[name][1]} AI model uninstalled ({ai_sync.MODELS[name][2]} freed). "
+                    "Songs it already synced keep their timing while AI sync is on.", "info", 6000)
         self._refresh_ai_status()
 
     def _refresh_ai_status(self):

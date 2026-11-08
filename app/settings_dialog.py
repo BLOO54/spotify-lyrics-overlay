@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QFontComboBox,
                                QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QProgressBar, QPushButton, QScrollArea, QSlider, QSpinBox,
-                               QStackedWidget,
+                               QMessageBox, QStackedWidget,
                                QVBoxLayout, QWidget)
 
 from . import APP_NAME, APP_VERSION, hotkeys
@@ -551,7 +551,8 @@ class SettingsDialog(QDialog):
                        "from the next play on, the lyrics follow the singer closely. Works for songs with "
                        "only unsynced lyrics too. The sound is kept in memory only and never saved or "
                        "uploaded; each song's timing is a tiny file. Your own synced files always come first."))
-        self._w["ai_sync_enabled"] = self._check("Use AI sync", "ai_sync_enabled")
+        self._w["ai_sync_enabled"] = self._check("Use AI sync (turning it off keeps the model installed)",
+                                                 "ai_sync_enabled")
         f.addRow(self._w["ai_sync_enabled"])
         self._w["ai_model"] = am = QComboBox()
         for key in ("light", "best"):
@@ -586,7 +587,7 @@ class SettingsDialog(QDialog):
         self.ai_get = QPushButton("Download model")
         self.ai_get.setObjectName("primary")
         self.ai_get.clicked.connect(lambda: self.ai_download_requested.emit(self.s.ai_model))
-        self.ai_del = QPushButton("Remove model")
+        self.ai_del = QPushButton("Uninstall model")
         self.ai_del.clicked.connect(self._ai_remove_or_cancel)
         arow.addWidget(self.ai_get)
         arow.addWidget(self.ai_del)
@@ -705,12 +706,20 @@ class SettingsDialog(QDialog):
         if busy:
             self.ai_get.setVisible(False)
             self.ai_del.setVisible(True)
-        self.ai_del.setText("Cancel download" if busy else "Remove model")
+        self.ai_del.setText("Cancel download" if busy else "Uninstall model")
 
     def _ai_remove_or_cancel(self):
         if self._ai_busy:
             self.ai_cancel_requested.emit()
-        else:
+            return
+        from .ai_sync import MODELS
+        _, label, size = MODELS[self.s.ai_model]
+        ans = QMessageBox.question(
+            self, "Uninstall AI model",
+            f"Uninstall the {label} AI model? This frees {size}.\n\n"
+            "To just pause AI sync, untick \"Use AI sync\" instead – then you won't need to download it again.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if ans == QMessageBox.StandardButton.Yes:
             self.ai_remove_requested.emit(self.s.ai_model)
 
     def set_update_status(self, text: str, can_update: bool):

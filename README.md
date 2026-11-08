@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.14.2.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.14.3.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.2.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.3.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -187,7 +187,8 @@ have unsynced lyrics online.
   in `%APPDATA%\SpotifyLyricsOverlay\ai_lyrics`.
 - Your own synced files (the tap-along tool) come first; turn off **Use my own synced files** to let AI sync time
   those songs too (your files are kept). The earlier / later shortcuts still work.
-- Tray → **AI sync: listen to this song again** redoes a song. **Remove model** gives the disk space back.
+- Tray → **AI sync: listen to this song again** redoes a song. Turn AI sync on / off from the tray menu or Settings - the model
+  stays installed. **Uninstall model** in Settings gives the disk space back.
 - **Listen to: Only Spotify** (the default) hears Spotify by itself, so game sound and voice chat don't get in the
   way (needs Windows 10 version 2004 or newer, or Windows 11 - otherwise it falls back to everything the PC
   plays, and Settings says so). It uses the speech-recognition model Whisper (by OpenAI) through `faster-whisper`, running entirely
