@@ -205,7 +205,7 @@ def test_run_job_reports_progress(monkeypatch):
     for k in range(80):                           # 40 s of sound in one piece
         rec.add(np.full(8000, 0.1, dtype=np.float32), 0.5 * (k + 1))
 
-    def fake_transcribe(model_dir, audio, lang, prompt, threads, progress=None):
+    def fake_transcribe(model_dir, audio, lang, prompt, threads, progress=None, parts=None):
         for f in (0.25, 0.5, 1.0):
             if progress:
                 progress(f)
@@ -334,7 +334,7 @@ def test_second_listen_finds_missed_lines(monkeypatch):
     truth = [2.0, 8.0, 14.0, 20.0, 26.0, 32.0]
     calls = []
 
-    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None):
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None):
         calls.append(prompt)
         span = len(audio) / AS.SAMPLE_RATE
         if span > 50:                                   # first listen: the whole song, chorus missed
