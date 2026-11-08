@@ -1208,10 +1208,25 @@ class Controller(QObject):
                 raise ValueError("not a synced-song file")
             p.unlink()
             p.with_suffix(".ai.json").unlink(missing_ok=True)       # AI details, if any
+            self._forget_ai_song(p)
             return True
         except Exception as e:
             log.warning("could not remove %s: %s", path, e)
             return False
+
+    def _forget_ai_song(self, p: Path):
+        """A synced song was removed: stop anything still going for it and drop it from the AI window."""
+        one = self._one_song
+        name = p.stem.split(" - ", 1)[-1].lower()
+        if one and (one.get("path") == str(p) or (one.get("mode") == "missed" and one["title"].lower() == name)):
+            if self.ai_listener is not None and one["state"] == "syncing":
+                self.ai_listener.take()
+            self._one_song = None
+        self._recent_ai = [r for r in self._recent_ai if (r.get("title") or "").lower() != name]
+        lp = getattr(self, "_last_patch", None)
+        if lp and (lp.get("title") or "").lower() == name:
+            self._last_patch = None
+        self._refresh_ai_window()
 
     def remove_synced(self, kind: str, path: str):
         p = Path(path)
@@ -1326,9 +1341,13 @@ class Controller(QObject):
         if _time.monotonic() - one.get("jumped", 0.0) < 1.5:
             return                              # an old position from before the jump may still arrive
         pos = self.clock.position()
-        if pos < plan[i][1]:
+        end = plan[i][1]
+        dur = (self.track.duration if self.track else 0) or 0
+        if dur:
+            end = min(end, dur - 1.5)           # stop just before the song ends, so the next one doesn't start
+        if pos < end:
             return
-        if pos > plan[i][1] + 4.0:              # the jump didn't happen (still somewhere else) - ask again
+        if pos > end + 4.0:                     # the jump didn't happen (still somewhere else) - ask again
             self._patch_jump(plan[i][0])
             return
         i += 1
@@ -1428,7 +1447,7 @@ class Controller(QObject):
             pos, playing = getattr(self, "_pos_before_change", (0.0, False))
             dur = (self.track.duration if self.track else 0) or 0
             left = dur - pos if (playing and dur) else 0
-            if 0 < left <= 20.0:
+            if dur and pos > 0 and left <= 20.0:
                 # Spotify's Crossfade started the next song while this one's end still plays underneath
                 log.info("one song: next song started %.1f s before the end - listening to the end, then pausing",
                          left)
@@ -1436,7 +1455,8 @@ class Controller(QObject):
                     rec = self.ai_listener.take() if self.ai_listener is not None else None
                     if rec is not None:
                         end = min(one["plan"][min(one["i"], len(one["plan"]) - 1)][1], dur - 0.2)
-                        self.ai_listener.start_tail(rec, pos, end)
+                        if end - pos > 0.3:
+                            self.ai_listener.start_tail(rec, pos, end)
                         one["state"] = "processing"
                         one["note"] = "Spotify's Crossfade started the next song – listening to the last bit…"
                         QTimer.singleShot(int(max(0.0, end - pos) * 1000) + 700,
@@ -1451,11 +1471,17 @@ class Controller(QObject):
                                       lambda: None if self.demo else self.watcher.request("pause"))
                     return
             log.info("one song: another song started before it finished (%.0f s left)", left)
+            if one.get("mode") == "missed":
+                # don't keep waiting in the background (it would jump around the next time the song plays)
+                if self.ai_listener is not None:
+                    self.ai_listener.take()
+                self._one_song = None
+                self.notify(f"Stopped listening to the missed parts of “{one['title']}” – another song "
+                            "started. Press the button again to retry.", "info", 6000)
+                self._refresh_ai_window()
+                return
             one["state"] = "waiting"
             one["note"] = "Another song started before it finished – press play on it again to sync it."
-            if one.get("mode") == "missed" and self.ai_listener is not None:
-                self.ai_listener.take()
-                one["i"] = 0
 
     def _one_song_begin(self, st):
         one = self._one_song

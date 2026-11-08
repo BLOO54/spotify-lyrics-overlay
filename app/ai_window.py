@@ -338,6 +338,18 @@ class AiSyncWindow(QWidget):
         if not entries:
             self.songs.addItem(QListWidgetItem("No songs yet – play a song to the end with AI sync on."))
         self.songs.blockSignals(False)
+        # the song shown on the right was removed: don't keep showing its old heard / missed list
+        picked = getattr(self, "_picked", None)
+        still = [k for k, e in enumerate(entries) if picked and e.get("path") and e.get("path") == picked.get("path")]
+        if still:
+            self.songs.setCurrentRow(still[0])
+            self._song_picked(still[0])
+        elif picked is not None:
+            self._picked = None
+            self.rematch_btn.setVisible(False)
+            self.missed_btn.setVisible(False)
+            self.lines.setHtml("<p style='color:#9a9ab0'>Pick a song on the left to see which lines the AI "
+                               "heard and missed.</p>")
 
     def _rematch(self):
         e = getattr(self, "_picked", None)
