@@ -216,6 +216,7 @@ def main() -> int:
                         help="CI: run AI sync on a recording and write a report")
     parser.add_argument("--ai-store", help="CI: folder for the AI model")
     parser.add_argument("--ai-note", help="CI: show this AI sync note in the overlay header")
+    parser.add_argument("--ai-progress", type=float, help="CI: progress (0-1) shown with --ai-note")
     parser.add_argument("--listen-test", help="CI: try recording the PC's sound, report to FILE")
     parser.add_argument("--app-audio-probe", nargs=2, metavar=("PID", "OUT"),
                         help="check that one app's sound can be recorded (used by AI sync)")
@@ -295,7 +296,8 @@ def main() -> int:
         _schedule_tap_test(app, ctl, args.test_tap)
     if args.ai_note:
         note_timer = QTimer()
-        note_timer.timeout.connect(lambda: ctl.overlay.set_ai_note(args.ai_note))
+        note_timer.timeout.connect(lambda: ctl.overlay.set_ai_note(args.ai_note.replace("_", " "),
+                                                                   args.ai_progress))
         note_timer.start(300)
     if args.ui_shot:
         what, file = args.ui_shot

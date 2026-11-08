@@ -64,6 +64,7 @@ class _Bridge(QObject):
     update_downloaded = Signal(object)
     ai_done = Signal(object, object)          # job, (lrc, result, message) or an error
     ai_progress = Signal(object, object)      # done bytes, total bytes
+    ai_job_progress = Signal(object, object)  # song key, fraction 0..1 while the AI works on it
     ai_downloaded = Signal(object, object)    # model name, error or None
 
 
@@ -107,6 +108,7 @@ class Controller(QObject):
         self.bridge.update_downloaded.connect(self._on_update_downloaded)
         self.bridge.ai_done.connect(self._on_ai_done)
         self.bridge.ai_progress.connect(self._on_ai_progress)
+        self.bridge.ai_job_progress.connect(self._on_ai_job_progress)
         self.bridge.ai_downloaded.connect(self._on_ai_downloaded)
         self.update_info = None
         self._update_busy = False
@@ -125,6 +127,8 @@ class Controller(QObject):
         self.ai_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai")
         self._ai_ctx = None
         self._ai_jobs = 0
+        self._ai_job_key = None         # the song the AI is working on right now
+        self._ai_job_frac = None
         self._ai_download = None        # (model name, cancel event) while downloading
         self._ai_dl_text = ""
         self._ai_prev = (self.s.ai_sync_enabled, self.s.ai_model, self.s.use_my_files)
@@ -158,7 +162,7 @@ class Controller(QObject):
         self.top_timer.start(TOPMOST_MS)
         self.ai_timer = QTimer(self)
         self.ai_timer.timeout.connect(self._ai_check)
-        self.ai_timer.start(2000)
+        self.ai_timer.start(1000)
 
         self.hotkey_filter = None
         self._registered = set()
@@ -709,7 +713,7 @@ class Controller(QObject):
         self.overlay.duration = st.duration
         if st.track_key != self.track_key:
             self._ai_finish()
-            self.overlay.set_ai_note("")
+            self.overlay.set_ai_note("")          # the 1-second AI timer shows any AI progress again
             self.track_key = st.track_key
             self.track = st
             self._last_result = None
@@ -850,7 +854,7 @@ class Controller(QObject):
     def _ai_arm(self, result):
         """Lyrics are on screen: start listening, if AI sync should time this song."""
         self._ai_ctx = None
-        self.overlay.set_ai_note("")
+        self._update_ai_indicator()
         if self.ai_listener is not None:
             self.ai_listener.take()
         if not self._ai_ready() or not self.track or result.instrumental:
@@ -870,11 +874,12 @@ class Controller(QObject):
         if self.ai_listener is None:
             self.ai_listener = ai_sync.Listener(self._ai_state, self._ai_target)
         self.ai_listener.arm(self.track_key, self.track.duration or 0.0)
-        self.overlay.set_ai_note("AI listening")
+        self._update_ai_indicator()
         log.info("AI sync: listening to %s - %s", self.track.artist, self.track.title)
 
     def _ai_check(self):
         """Every 2 s: once (almost) the whole song has been heard, start the AI."""
+        self._update_ai_indicator()
         if self.ai_listener is None or self._ai_ctx is None:
             return
         rec = self.ai_listener.peek()
@@ -891,14 +896,11 @@ class Controller(QObject):
         key, title, artist, lines, orig = ctx
         heard = rec.covered()
         need = (0.35 if orig else 0.8) * (rec.duration or 0)
-        if key == self.track_key:
-            self.overlay.set_ai_note("")
+        self._update_ai_indicator()
         if heard < max(need, 25.0):
             log.info("AI sync: only %.0f s of %s heard - not enough, will listen next time", heard, title)
             return
         job = ai_sync.Job(key, title, artist, lines, orig, rec)
-        if key == self.track_key:
-            self.overlay.set_ai_note("AI working…")      # song nearly over, still on screen
         model_dir = self.ai_store.path(self.s.ai_model)
         threads = self.s.ai_threads
         self._ai_jobs += 1
@@ -906,7 +908,8 @@ class Controller(QObject):
         def work():
             win32.set_background_priority(True)
             try:
-                return ai_sync.run_job(job, model_dir, threads)
+                return ai_sync.run_job(job, model_dir, threads,
+                                       progress=lambda f: self.bridge.ai_job_progress.emit(job.key, f))
             except Exception as e:
                 log.exception("AI sync failed")
                 return e
@@ -916,10 +919,28 @@ class Controller(QObject):
         fut = self.ai_pool.submit(work)
         fut.add_done_callback(lambda f: self.bridge.ai_done.emit(job, f.result()))
 
+    def _on_ai_job_progress(self, key, frac):
+        self._ai_job_key, self._ai_job_frac = key, float(frac)
+        self._update_ai_indicator()
+
+    def _update_ai_indicator(self):
+        """The 'AI listening 42%' / 'AI syncing 63%' note (and bar) in the overlay header."""
+        if self._ai_job_key is not None and self._ai_jobs:
+            same = self._ai_job_key == self.track_key
+            self.overlay.set_ai_note("AI syncing" if same else "AI syncing last song", self._ai_job_frac)
+            return
+        rec = self.ai_listener.peek() if (self.ai_listener is not None and self._ai_ctx is not None) else None
+        if rec is not None and rec.key == self.track_key:
+            need = 0.95 * rec.duration if rec.duration else 0.0
+            self.overlay.set_ai_note("AI listening", min(1.0, rec.covered() / need) if need else None)
+        else:
+            self.overlay.set_ai_note("")
+
     def _on_ai_done(self, job, out):
         self._ai_jobs = max(0, self._ai_jobs - 1)
-        if job.key == self.track_key:
-            self.overlay.set_ai_note("")
+        if job.key == self._ai_job_key:
+            self._ai_job_key, self._ai_job_frac = None, None
+        self._update_ai_indicator()
         if isinstance(out, Exception):
             self.notify(f"AI sync couldn't time “{job.title}” ({out}). The normal timing is still used.",
                         "warning", 6000, keep=True)

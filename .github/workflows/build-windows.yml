@@ -102,8 +102,9 @@ jobs:
             "design-classic" = @{ song = "1";  at = 6; grab = $false; s = @{ design = "classic"; show_album_art = $true; time_display = "left"; show_progress = $true } }
             "design-aurora"  = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "aurora"; show_album_art = $true; time_display = "left"; show_progress = $true; translate_enabled = $true } }
             "design-hud"     = @{ song = "1";  at = 6; grab = $false; s = @{ design = "hud"; show_album_art = $false; time_display = "elapsed"; show_progress = $true } }
-            "ai-listening"   = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI listening"); s = @{ design = "classic"; show_album_art = $true; time_display = "left" } }
-            "ai-spotify"     = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI listening"); s = @{ design = "spotify"; show_album_art = $true; time_display = "left" } }
+            "ai-listening"   = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI_listening","--ai-progress","0.42"); s = @{ design = "classic"; show_album_art = $true; time_display = "left"; ai_sync_enabled = $true } }
+            "ai-spotify"     = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI_syncing","--ai-progress","0.63"); s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; ai_sync_enabled = $true } }
+            "ai-hud"         = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI_syncing","--ai-progress","0.8"); s = @{ design = "hud"; show_album_art = $false; time_display = "left"; ai_sync_enabled = $true } }
             "design-spotify" = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; match_album_highlight = $true } }
           }
           foreach ($name in $shots.Keys) {

@@ -107,7 +107,8 @@ class OverlayWindow(QWidget):
         self.play_pos = 0.0           # real song position, for the timer
         self.duration = 0.0
         self.word_mode_label = ""
-        self.ai_note = ""          # "AI listening" / "AI working…" while AI sync learns this song
+        self.ai_note = ""          # "AI listening" / "AI syncing" while AI sync learns a song
+        self.ai_progress = None    # 0..1 for the progress bar / %, None = no progress to show
 
         self._art_bytes: bytes | None = None
         self._art_pix: QPixmap | None = None
@@ -605,10 +606,33 @@ class OverlayWindow(QWidget):
         self.translation_pending = False
         self.apply_settings()         # the height depends on how long this song's lines are
 
-    def set_ai_note(self, text: str):
-        if text != self.ai_note:
+    def set_ai_note(self, text: str, progress: float | None = None):
+        if text != self.ai_note or progress != self.ai_progress:
             self.ai_note = text
+            self.ai_progress = progress if text else None
             self.update()
+
+    def ai_note_text(self) -> str:
+        """'AI listening 42%' - the note with its percentage (if that's switched on)."""
+        if not (self.ai_note and self.s.ai_sync_enabled):
+            return ""
+        if self.ai_progress is not None and self.s.ai_progress_style in ("bar", "percent"):
+            return f"{self.ai_note} {int(round(_clamp01(self.ai_progress) * 100))}%"
+        return self.ai_note
+
+    def _paint_ai_bar(self, p: QPainter, x: float, width: float, y: float):
+        """A thin progress bar above the AI note."""
+        if self.ai_progress is None or self.s.ai_progress_style != "bar" or width < 10:
+            return
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_qc(self._c("text_color"), 0.18))
+        p.drawRoundedRect(QRectF(x, y, width, 3), 1.5, 1.5)
+        fill = _clamp01(self.ai_progress) * width
+        if fill > 0.5:
+            p.setBrush(_qc(self._c("highlight_color"), 0.95))
+            p.drawRoundedRect(QRectF(x, y, fill, 3), 1.5, 1.5)
+        p.restore()
 
     def header_label(self) -> str:
         """The small coloured text in the header: how the lyrics are timed (+ translation, AI)."""
@@ -617,8 +641,9 @@ class OverlayWindow(QWidget):
             label = label.replace("AI timing · ", "")
         if self.extras is not None and self.extras.label and self._show_translation():
             label = (label + " · " if label else "") + self.extras.label
-        if self.ai_note and self.s.ai_sync_enabled:
-            label = self.ai_note + (" · " + label if label else "")
+        note = self.ai_note_text()
+        if note:
+            label = note + (" · " + label if label else "")
         return label
 
     def set_translation_pending(self, pending: bool):
@@ -973,6 +998,9 @@ class OverlayWindow(QWidget):
             if right_edge - lw > x + 160:          # only if there's room left for the title
                 p.setPen(_qc(self._c("highlight_color"), 0.75))
                 p.drawText(QPointF(right_edge - lw, base), label)
+                note = self.ai_note_text()
+                if note and label.startswith(note):
+                    self._paint_ai_bar(p, right_edge - lw, fm.horizontalAdvance(note), base - fm.ascent() - 4)
                 right_edge -= lw + 14
         if self.s.show_title:
             d = self.design
@@ -1044,8 +1072,12 @@ class OverlayWindow(QWidget):
         label = self.header_label()
         if label:
             sub = f"{sub}  ·  {label}" if sub else label
-        p.drawText(QPointF(x, top + tfm.height() + sfm.ascent()),
-                   sfm.elidedText(sub, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
+        sub_base = top + tfm.height() + sfm.ascent()
+        p.drawText(QPointF(x, sub_base), sfm.elidedText(sub, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
+        note = self.ai_note_text()
+        if note and sfm.horizontalAdvance(sub) <= right_edge - x:
+            start = x + sfm.horizontalAdvance(sub[:len(sub) - len(label)]) if label else x
+            self._paint_ai_bar(p, start, sfm.horizontalAdvance(note), sub_base - sfm.ascent() - 3)
 
     def _paint_progress(self, p: QPainter, area):
         if self.duration <= 0:

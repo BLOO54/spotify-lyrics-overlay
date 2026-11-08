@@ -195,3 +195,23 @@ def test_notification_history(tmp_path):
     assert when_text("2026-11-07T19:52:00", now) == "Today 7:52 PM"
     assert when_text("2026-11-06T09:03:00", now) == "Yesterday 9:03 AM"
     assert when_text("2026-11-03T19:52:00", now) == "Nov 3, 7:52 PM"
+
+
+def test_run_job_reports_progress(monkeypatch):
+    import numpy as np
+
+    import app.ai_sync as AS
+    rec = AS.Recording("k", 60)
+    for k in range(80):                           # 40 s of sound in one piece
+        rec.add(np.full(8000, 0.1, dtype=np.float32), 0.5 * (k + 1))
+
+    def fake_transcribe(model_dir, audio, lang, prompt, threads, progress=None):
+        for f in (0.25, 0.5, 1.0):
+            if progress:
+                progress(f)
+        return [AS.Heard(w, 1.0 + 0.3 * i, 1.2 + 0.3 * i) for i, w in enumerate("Hold the line and let go".split())]
+    monkeypatch.setattr(AS, "transcribe", fake_transcribe)
+    seen = []
+    job = AS.Job("k", "T", "A", ["Hold the line and let go", "x y z", "a b c"], None, rec)
+    AS.run_job(job, None, 2, progress=seen.append)
+    assert seen[0] == 0.0 and seen[-1] == 1.0 and seen == sorted(seen) and 0.4 < seen[2] < 0.6

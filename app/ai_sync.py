@@ -657,7 +657,7 @@ class Listener:
 # --------------------------------------------------------------------------- the AI
 
 def transcribe(model_dir: Path, audio, language: str | None = None, prompt: str | None = None,
-               threads: int = 2) -> list[Heard]:
+               threads: int = 2, progress=None) -> list[Heard]:
     """Run speech recognition on 16 kHz mono float audio; returns every word with its time."""
     from faster_whisper import WhisperModel
     model = WhisperModel(str(model_dir), device="cpu", compute_type="int8", cpu_threads=threads)
@@ -667,9 +667,12 @@ def transcribe(model_dir: Path, audio, language: str | None = None, prompt: str 
             condition_on_previous_text=False, initial_prompt=prompt, beam_size=5,
             no_speech_threshold=0.45)
         words: list[Heard] = []
+        total = max(len(audio) / SAMPLE_RATE, 0.1)
         for seg in segments:
             for w in (seg.words or []):
                 words.append(Heard(w.word.strip(), float(w.start), float(w.end)))
+            if progress:
+                progress(min(1.0, float(seg.end) / total))
         return words
     finally:
         del model
@@ -774,22 +777,29 @@ class Job:
     recording: Recording
 
 
-def run_job(job: Job, model_dir: Path, threads: int = 2) -> tuple[str | None, AlignResult | None, str]:
-    """Hear the recorded song and build the AI-timed .lrc. Returns (lrc, result, message)."""
+def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple[str | None, AlignResult | None, str]:
+    """Hear the recorded song and build the AI-timed .lrc. Returns (lrc, result, message).
+    progress(fraction 0..1) is called as the AI works through the song."""
     import numpy as np
     heard: list[Heard] = []
     lang = whisper_language(job.lines)
     prompt = " ".join(ln for ln in job.lines if ln.strip())[:200] or None
     loud = 0.0
-    for seg in job.recording.segments:
-        if seg.seconds < 8:
-            continue
+    pieces = [s for s in job.recording.segments if s.seconds >= 8]
+    total = max(sum(s.seconds for s in pieces), 0.1)
+    done = 0.0
+    if progress:
+        progress(0.0)
+    for seg in pieces:
         audio = np.concatenate(seg.frames).astype(np.float32)
         loud = max(loud, float(np.sqrt(np.mean(audio * audio))) if len(audio) else 0.0)
-        if loud < 1e-4:
-            continue
-        for w in transcribe(model_dir, audio, lang, prompt, threads):
-            heard.append(Heard(w.text, w.start + seg.start, w.end + seg.start))
+        if loud >= 1e-4:
+            part = (lambda f, d=done, n=seg.seconds: progress((d + f * n) / total)) if progress else None
+            for w in transcribe(model_dir, audio, lang, prompt, threads, part):
+                heard.append(Heard(w.text, w.start + seg.start, w.end + seg.start))
+        done += seg.seconds
+    if progress:
+        progress(1.0)
     if loud < 1e-4:
         return None, None, "the recording was silent (is Spotify playing on a different sound device?)"
     heard.sort(key=lambda w: w.start)
