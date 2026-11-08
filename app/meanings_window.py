@@ -28,6 +28,7 @@ QListWidget#lyrics::item:selected, QListWidget#results::item:selected { backgrou
 QListWidget#lyrics::item:hover, QListWidget#results::item:hover { background: #1f1f2b; }
 QTextBrowser#meaning { background: #15151d; border: 1px solid #23232e; border-radius: 10px; padding: 14px;
     color: #e6e6f0; font-size: 14px; }
+QSplitter::handle { background: transparent; width: 8px; }
 QLabel#songTitle { font-size: 20px; font-weight: 600; }
 QLabel#songArtist { color: #9a9ab0; font-size: 13px; }
 QLabel#credit { color: #6f6f88; font-size: 11px; }
