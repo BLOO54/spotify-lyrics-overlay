@@ -178,3 +178,20 @@ def test_whole_pc_setting(monkeypatch):
     AS = _fake_sound(monkeypatch, app_ok=True)
     lis, rec = _listen(AS, None)
     assert lis.method == "whole PC"
+
+
+def test_notification_history(tmp_path):
+    from datetime import datetime
+
+    from app.history import NotificationLog, when_text
+    log = NotificationLog(tmp_path / "n.json")
+    for i in range(105):
+        log.add(f"song {i}", "success")
+    again = NotificationLog(tmp_path / "n.json")
+    assert len(again.entries) == 100 and again.newest_first()[0]["text"] == "song 104"
+    again.clear()
+    assert NotificationLog(tmp_path / "n.json").entries == []
+    now = datetime(2026, 11, 7, 20, 0)
+    assert when_text("2026-11-07T19:52:00", now) == "Today 7:52 PM"
+    assert when_text("2026-11-06T09:03:00", now) == "Yesterday 9:03 AM"
+    assert when_text("2026-11-03T19:52:00", now) == "Nov 3, 7:52 PM"

@@ -55,6 +55,9 @@ QProgressBar { background: #1b1b24; border: 1px solid #2a2a36; border-radius: 6p
                text-align: center; color: transparent; }
 QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c3aed, stop:1 #a78bfa);
                       border-radius: 5px; }
+QListWidget#history { background: #14141b; border: 1px solid #24242f; border-radius: 8px; padding: 6px;
+                      color: #e6e6f0; }
+QListWidget#history::item { padding: 10px 8px; border-bottom: 1px solid #22222c; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; border: none; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QScrollBar::handle:vertical { background: #2e2e3c; border-radius: 4px; min-height: 30px; }
@@ -208,6 +211,7 @@ class SettingsDialog(QDialog):
     ai_remove_requested = Signal(str)
     ai_cancel_requested = Signal()
     ai_status_wanted = Signal()
+    history_clear_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -271,8 +275,9 @@ class SettingsDialog(QDialog):
             ("Lyrics & translation", "Timing, your own lyrics and translations", self._lyrics_tab()),
             ("Behaviour", "Click-through, notifications and updates", self._behaviour_tab()),
             ("Shortcuts", "Keys that work even in games", self._shortcuts_tab()),
+            ("Notifications", "Past pop-ups: songs synced, model downloads and saved timing", self._history_tab()),
         ]
-        icons = ["◐", "▦", "♫", "⚙", "⌨"]
+        icons = ["◐", "▦", "♫", "⚙", "⌨", "🔔"]
         self._pages = pages
         for (name, sub, widget), icon in zip(pages, icons):
             self.nav.addItem(QListWidgetItem(f"{icon}   {name}"))
@@ -692,6 +697,45 @@ class SettingsDialog(QDialog):
         f.addRow(_hint("Updating downloads the new version from your GitHub releases page, checks the file, "
                        "installs it quietly and restarts the overlay. Your settings are kept."))
         return w
+
+    def _history_tab(self):
+        w, f = self._page()
+        self.history_list = QListWidget()
+        self.history_list.setObjectName("history")
+        self.history_list.setWordWrap(True)
+        self.history_list.setMinimumHeight(320)
+        self.history_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.history_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        f.addRow(self.history_list)
+        row = QHBoxLayout()
+        self.history_count = QLabel("")
+        self.history_count.setStyleSheet("color:#7f7f98;")
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self.history_clear_requested)
+        row.addWidget(self.history_count)
+        row.addStretch(1)
+        row.addWidget(clear)
+        holder = QWidget()
+        holder.setLayout(row)
+        f.addRow(holder)
+        f.addRow(_hint("Only the important ones are kept here (the last 100) – things like a song finishing "
+                       "AI sync, a model download, or timing you saved yourself."))
+        return w
+
+    def show_history(self, entries: list):
+        from .history import when_text
+        self.history_list.clear()
+        marks = {"success": "✔", "warning": "⚠", "info": "•"}
+        for e in entries:
+            kind = e.get("kind", "info")
+            item = QListWidgetItem(f"{marks.get(kind, '•')}  {when_text(e.get('time', ''))}\n{e.get('text', '')}")
+            item.setForeground(QColor("#e6e6f0"))
+            item.setData(Qt.ItemDataRole.UserRole, kind)
+            item.setToolTip(e.get("text", ""))
+            self.history_list.addItem(item)
+        if not entries:
+            self.history_list.addItem(QListWidgetItem("No notifications yet."))
+        self.history_count.setText(f"{len(entries)} saved" if entries else "")
 
     def set_ai_status(self, text: str, busy: bool = False, installed: bool | None = None,
                       progress: int | None = None):

@@ -27,6 +27,7 @@ from .media_session import MediaState, MediaWatcher
 from .song_sync import SongSync
 from . import ai_sync
 from .lrc import parse_lrc
+from .history import NotificationLog
 from .my_lyrics import MyLyrics, lines_for_tapping
 from . import hotkeys, updater
 from .overlay import OverlayWindow
@@ -116,6 +117,7 @@ class Controller(QObject):
             "Lyrics timed by AI sync (one small .lrc file per song). Delete a file to let the\n"
             "app listen to that song again. Your own files in \"my_lyrics\" always come first.\n"))
         self.song_sync_ai = SongSync(app_data_dir() / "song_sync_ai.json")
+        self.history = NotificationLog(app_data_dir() / "notifications.json")
         self.ai_store = ai_sync.ModelStore()
         self.ai_listener = None
         self.ai_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai")
@@ -248,8 +250,13 @@ class Controller(QObject):
         self.tray.messageClicked.connect(self._tray_message_clicked)
         self.tray.show()
 
-    def notify(self, text: str, kind: str = "info", ms: int = 4000, action: str = ""):
-        """Show a pop-up: the app's own sliding card, or a standard Windows notification."""
+    def notify(self, text: str, kind: str = "info", ms: int = 4000, action: str = "", keep: bool = False):
+        """Show a pop-up: the app's own sliding card, or a standard Windows notification.
+        keep=True also saves it in Settings → Notifications (for things worth looking back at)."""
+        if keep:
+            self.history.add(text, kind)
+            if self.settings_dlg is not None:
+                self.settings_dlg.show_history(self.history.newest_first())
         if self.s.popup_style == "windows":
             icon = (QSystemTrayIcon.MessageIcon.Warning if kind == "warning"
                     else QSystemTrayIcon.MessageIcon.Information)
@@ -425,6 +432,8 @@ class Controller(QObject):
             self.settings_dlg.ai_remove_requested.connect(self.ai_remove)
             self.settings_dlg.ai_cancel_requested.connect(self.ai_cancel_download)
             self.settings_dlg.ai_status_wanted.connect(self._refresh_ai_status)
+            self.settings_dlg.history_clear_requested.connect(self._clear_history)
+            self.settings_dlg.show_history(self.history.newest_first())
             self._show_update_status()
         self.settings_dlg.show()
         self.settings_dlg.raise_()
@@ -505,7 +514,7 @@ class Controller(QObject):
         if self.track and self.track.title == title:
             self._song_offset_ms = 0
             self._fetch(self.track)
-        self.notify(f"Saved your timing for {title}. It's used from now on.", "info", 4000)
+        self.notify(f"Saved your timing for {title}. It's used from now on.", "info", 4000, keep=True)
 
     # ------------------------------------------------------------ updates
     def check_updates(self, silent: bool = True):
@@ -898,15 +907,16 @@ class Controller(QObject):
             self.overlay.set_ai_note("")
         if isinstance(out, Exception):
             self.notify(f"AI sync couldn't time “{job.title}” ({out}). The normal timing is still used.",
-                        "warning", 6000)
+                        "warning", 6000, keep=True)
             return
         text, res, msg = out
         if not text:
             log.info("AI sync: %s - %s", job.title, msg)
-            self.notify(f"AI sync: “{job.title}” – {msg}.", "info", 5000)
+            self.notify(f"AI sync: “{job.title}” – {msg}.", "info", 5000, keep=True)
             return
         self.ai_lyrics.save(job.title, job.artist, text)
-        self.notify(f"AI synced “{job.title}” ({msg}). It uses the new timing from now on.", "success", 5000)
+        self.notify(f"AI synced “{job.title}” ({msg}). It uses the new timing from now on.", "success", 5000,
+                    keep=True)
         if self.track and self.track.title == job.title and self.track.artist == job.artist:
             self._fetch(self.track)        # same song still (or again) playing: switch now
 
@@ -964,11 +974,11 @@ class Controller(QObject):
                 if self.settings_dlg is not None:
                     self.settings_dlg.sync_from_settings()
             self.notify("AI sync is ready. It learns each song the first time it plays to the end.",
-                        "success", 6000)
+                        "success", 6000, keep=True)
         elif isinstance(err, InterruptedError):
             self.ai_store.remove(name)
         else:
-            self.notify(f"AI model download failed: {err}", "warning", 7000)
+            self.notify(f"AI model download failed: {err}", "warning", 7000, keep=True)
         self._refresh_ai_status()
 
     def set_ai_enabled(self, on: bool):
@@ -997,8 +1007,13 @@ class Controller(QObject):
         self._ai_ctx = None
         self.ai_store.remove(name)
         self.notify(f"{ai_sync.MODELS[name][1]} AI model uninstalled ({ai_sync.MODELS[name][2]} freed). "
-                    "Songs it already synced keep their timing while AI sync is on.", "info", 6000)
+                    "Songs it already synced keep their timing while AI sync is on.", "info", 6000, keep=True)
         self._refresh_ai_status()
+
+    def _clear_history(self):
+        self.history.clear()
+        if self.settings_dlg is not None:
+            self.settings_dlg.show_history([])
 
     def _refresh_ai_status(self):
         if self.settings_dlg is not None:

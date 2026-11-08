@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.14.4.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.14.5.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.4.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.5.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -184,7 +184,7 @@ have unsynced lyrics online.
 3. Lines it couldn't hear clearly keep the normal timing, moved by however far off the lines around them were.
 
 - The overlay header shows **AI listening** while it learns a song, **AI working…** while it times it, and
-  **AI timing** once a song uses the AI timing (needs *Show song title* on).
+  **AI timing** once a song uses the AI timing (only while AI sync is on; needs *Show song title* on).
 - The sound is held in memory only - never saved to disk or uploaded. Each song's timing is a tiny `.lrc` file
   in `%APPDATA%\SpotifyLyricsOverlay\ai_lyrics`.
 - Your own synced files (the tap-along tool) come first; turn off **Use my own synced files** to let AI sync time
@@ -195,6 +195,10 @@ have unsynced lyrics online.
   way (needs Windows 10 version 2004 or newer, or Windows 11 - otherwise it falls back to everything the PC
   plays, and Settings says so). It uses the speech-recognition model Whisper (by OpenAI) through `faster-whisper`, running entirely
   on your PC; the model is downloaded once from Hugging Face.
+
+### 🔔 Notifications
+Settings → **Notifications** lists past pop-ups worth looking back at: songs AI sync finished (or couldn't
+time), model downloads and timing you saved yourself. **Clear** empties the list.
 
 ### 🌍 Translation and romaji
 Turn on **"Translate songs that aren't in my language"** in *Lyrics & translation* and pick your language.

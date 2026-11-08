@@ -302,6 +302,15 @@ def main() -> int:
         if what == "settings":
             QTimer.singleShot(1500, ctl.open_settings)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
+        elif what == "history":
+            def fill():
+                ctl.history.add("AI synced “Neon Horizon” (AI heard 31/34 lines). It uses the new timing from now on.", "success")
+                ctl.history.add("AI sync: “Loud Song” – only heard 6 of 40 lines clearly - kept the normal timing.", "info")
+                ctl.history.add("AI sync is ready. It learns each song the first time it plays to the end.", "success")
+                ctl.open_settings()
+                ctl.settings_dlg.nav.setCurrentRow(5)
+            QTimer.singleShot(1500, fill)
+            QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
         elif what == "toast":
             def pop():
                 ctl.s.popup_style = "app"

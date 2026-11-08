@@ -613,9 +613,11 @@ class OverlayWindow(QWidget):
     def header_label(self) -> str:
         """The small coloured text in the header: how the lyrics are timed (+ translation, AI)."""
         label = self.word_mode_label
+        if not self.s.ai_sync_enabled:          # the AI indicator only shows while AI sync is on
+            label = label.replace("AI timing · ", "")
         if self.extras is not None and self.extras.label and self._show_translation():
             label = (label + " · " if label else "") + self.extras.label
-        if self.ai_note:
+        if self.ai_note and self.s.ai_sync_enabled:
             label = self.ai_note + (" · " + label if label else "")
         return label
 
