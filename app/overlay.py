@@ -788,9 +788,52 @@ class OverlayWindow(QWidget):
 
     def _paint_simple_line(self, p, f: QFont, text: str, cy: float, color: QColor, area, max_rows: int = 1,
                            soft: bool = False):
-        """Draw plain (non-karaoke) text centred at cy, wrapping onto up to max_rows rows."""
-        if not text or color.alphaF() <= 0.01:
+        """Draw plain (non-karaoke) text centred at cy, wrapping onto up to max_rows rows.
+        Drawn once into a picture and reused: these lines hardly change, and filling in letter shapes
+        every frame was most of the drawing time. Fading = drawing the picture see-through."""
+        alpha = color.alphaF()
+        if not text or alpha <= 0.01:
             return
+        left, right = area
+        try:
+            dpr = float(self.devicePixelRatioF())
+        except Exception:
+            dpr = 1.0
+        full = _with_alpha(color, 1.0)
+        key = (f.key(), text, round(left, 1), round(right, 1), max_rows, soft, (round(full.redF(), 3), round(full.greenF(), 3), round(full.blueF(), 3)), self.design,
+               self._outline_factor(), self._outline_width(), self._one_row(), self._c("text_color"), dpr)
+        cache = self.__dict__.setdefault("_line_pix", {})
+        hit = cache.get(key)
+        if hit is None:
+            tokens = split_tokens(text)
+            if not tokens:
+                return
+            avail = right - left - self._pad * 0.5
+            f2, rows, _, _ = self._fit_tokens(f, tokens, avail, 1 if self._one_row() else max_rows)
+            n = min(len(rows), max_rows)
+            m = 8.0                                         # room for the outline / soft edge
+            h = QFontMetricsF(f2).height() * 1.05 * n + 2 * m
+            w = right - left + 2 * m
+            pm = QPixmap(max(1, int(w * dpr) + 1), max(1, int(h * dpr) + 1))
+            pm.setDevicePixelRatio(dpr)
+            pm.fill(Qt.GlobalColor.transparent)
+            q = QPainter(pm)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            q.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            q.translate(-(left - m), 0)
+            self._draw_simple_line_now(q, f, text, h / 2, full, area, max_rows, soft)
+            q.end()
+            if len(cache) > 60:
+                cache.clear()
+            cache[key] = hit = (pm, h, m)
+        pm, h, m = hit
+        p.save()
+        p.setOpacity(p.opacity() * alpha)
+        p.drawPixmap(QPointF(left - m, cy - h / 2), pm)
+        p.restore()
+
+    def _draw_simple_line_now(self, p, f: QFont, text: str, cy: float, color: QColor, area, max_rows: int = 1,
+                              soft: bool = False):
         left, right = area
         avail = right - left - self._pad * 0.5
         tokens = split_tokens(text)
