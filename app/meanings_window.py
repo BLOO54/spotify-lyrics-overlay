@@ -29,7 +29,7 @@ def _style(accent: str) -> str:
     a = QColor(accent)
     h = accent.lstrip("#")
     r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4)) if len(h) == 6 else (139, 92, 246)
-    rgba = f"rgba({r},{g},{b},0.35)"
+    rgba = f"rgba({r}, {g}, {b}, 35%)"
     return STYLE + f"""
 QWidget#meaningsRoot {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #11101a, stop:1 #0b0b10);
     color: #ececf3; }}
@@ -597,7 +597,8 @@ class MeaningsWindow(QWidget):
             for hit in result:
                 it = QListWidgetItem(f"{hit.title}\n{hit.artist}")
                 it.setData(Qt.ItemDataRole.UserRole, hit)
-                it.setIcon(self._thumb_icon(hit.thumb))
+                if hit.thumb:                       # Genius results have cover pictures, LRCLIB ones don't
+                    it.setIcon(self._thumb_icon(hit.thumb))
                 self.results.addItem(it)
             if not result:
                 self.results.addItem(QListWidgetItem("No songs found."))

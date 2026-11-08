@@ -806,12 +806,15 @@ class SettingsDialog(QDialog):
                 continue
             shown += 1
             row = QWidget()
-            row.setStyleSheet("background: transparent;")
+            row.setObjectName("syncRow")
+            row.setStyleSheet("QWidget#syncRow { background: transparent; }")
             h = QHBoxLayout(row)
             h.setContentsMargins(8, 8, 8, 8)
             h.setSpacing(12)
             badge = QLabel("Synced by me" if e["kind"] == "mine" else "AI synced")
             badge.setObjectName("badgeMine" if e["kind"] == "mine" else "badgeAi")
+            badge.setFixedWidth(96)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             texts = QVBoxLayout()
             texts.setSpacing(2)
             t = QLabel(e["title"] or "(untitled)")
