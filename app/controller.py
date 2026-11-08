@@ -685,6 +685,7 @@ class Controller(QObject):
         self.overlay.duration = st.duration
         if st.track_key != self.track_key:
             self._ai_finish()
+            self.overlay.set_ai_note("")
             self.track_key = st.track_key
             self.track = st
             self._last_result = None
@@ -825,6 +826,7 @@ class Controller(QObject):
     def _ai_arm(self, result):
         """Lyrics are on screen: start listening, if AI sync should time this song."""
         self._ai_ctx = None
+        self.overlay.set_ai_note("")
         if self.ai_listener is not None:
             self.ai_listener.take()
         if not self._ai_ready() or not self.track or result.instrumental:
@@ -844,6 +846,7 @@ class Controller(QObject):
         if self.ai_listener is None:
             self.ai_listener = ai_sync.Listener(self._ai_state, self._ai_target)
         self.ai_listener.arm(self.track_key, self.track.duration or 0.0)
+        self.overlay.set_ai_note("AI listening")
         log.info("AI sync: listening to %s - %s", self.track.artist, self.track.title)
 
     def _ai_check(self):
@@ -864,10 +867,14 @@ class Controller(QObject):
         key, title, artist, lines, orig = ctx
         heard = rec.covered()
         need = (0.35 if orig else 0.8) * (rec.duration or 0)
+        if key == self.track_key:
+            self.overlay.set_ai_note("")
         if heard < max(need, 25.0):
             log.info("AI sync: only %.0f s of %s heard - not enough, will listen next time", heard, title)
             return
         job = ai_sync.Job(key, title, artist, lines, orig, rec)
+        if key == self.track_key:
+            self.overlay.set_ai_note("AI working…")      # song nearly over, still on screen
         model_dir = self.ai_store.path(self.s.ai_model)
         threads = self.s.ai_threads
         self._ai_jobs += 1
@@ -887,6 +894,8 @@ class Controller(QObject):
 
     def _on_ai_done(self, job, out):
         self._ai_jobs = max(0, self._ai_jobs - 1)
+        if job.key == self.track_key:
+            self.overlay.set_ai_note("")
         if isinstance(out, Exception):
             self.notify(f"AI sync couldn't time “{job.title}” ({out}). The normal timing is still used.",
                         "warning", 6000)

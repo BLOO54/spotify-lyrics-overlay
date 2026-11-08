@@ -107,6 +107,7 @@ class OverlayWindow(QWidget):
         self.play_pos = 0.0           # real song position, for the timer
         self.duration = 0.0
         self.word_mode_label = ""
+        self.ai_note = ""          # "AI listening" / "AI working…" while AI sync learns this song
 
         self._art_bytes: bytes | None = None
         self._art_pix: QPixmap | None = None
@@ -598,9 +599,25 @@ class OverlayWindow(QWidget):
             self.word_mode_label = ""
         if lyrics and lyrics.source == "my file" and self.word_mode_label:
             self.word_mode_label = "your timing · " + self.word_mode_label
+        if lyrics and lyrics.source == "AI sync" and self.word_mode_label:
+            self.word_mode_label = "AI timing · " + self.word_mode_label.replace("line sync · ", "")
         self.extras = None
         self.translation_pending = False
         self.apply_settings()         # the height depends on how long this song's lines are
+
+    def set_ai_note(self, text: str):
+        if text != self.ai_note:
+            self.ai_note = text
+            self.update()
+
+    def header_label(self) -> str:
+        """The small coloured text in the header: how the lyrics are timed (+ translation, AI)."""
+        label = self.word_mode_label
+        if self.extras is not None and self.extras.label and self._show_translation():
+            label = (label + " · " if label else "") + self.extras.label
+        if self.ai_note:
+            label = self.ai_note + (" · " + label if label else "")
+        return label
 
     def set_translation_pending(self, pending: bool):
         if pending != self.translation_pending:
@@ -948,9 +965,7 @@ class OverlayWindow(QWidget):
             p.setPen(_qc(self._c("text_color"), 0.85))
             p.drawText(QPointF(right_edge - tw, base), t)
             right_edge -= tw + 14
-        label = self.word_mode_label
-        if self.extras is not None and self.extras.label and self._show_translation():
-            label = (label + " · " if label else "") + self.extras.label
+        label = self.header_label()
         if self.s.show_title and label:
             lw = fm.horizontalAdvance(label)
             if right_edge - lw > x + 160:          # only if there's room left for the title
@@ -1023,8 +1038,12 @@ class OverlayWindow(QWidget):
                    tfm.elidedText(self.title or "Spotify Lyrics Overlay", Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
         p.setFont(sub_f)
         p.setPen(QColor(255, 255, 255, 170))
+        sub = self.artist or ""
+        label = self.header_label()
+        if label:
+            sub = f"{sub}  ·  {label}" if sub else label
         p.drawText(QPointF(x, top + tfm.height() + sfm.ascent()),
-                   sfm.elidedText(self.artist or "", Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
+                   sfm.elidedText(sub, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x)))
 
     def _paint_progress(self, p: QPainter, area):
         if self.duration <= 0:

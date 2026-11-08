@@ -102,6 +102,8 @@ jobs:
             "design-classic" = @{ song = "1";  at = 6; grab = $false; s = @{ design = "classic"; show_album_art = $true; time_display = "left"; show_progress = $true } }
             "design-aurora"  = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "aurora"; show_album_art = $true; time_display = "left"; show_progress = $true; translate_enabled = $true } }
             "design-hud"     = @{ song = "1";  at = 6; grab = $false; s = @{ design = "hud"; show_album_art = $false; time_display = "elapsed"; show_progress = $true } }
+            "ai-listening"   = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI listening"); s = @{ design = "classic"; show_album_art = $true; time_display = "left" } }
+            "ai-spotify"     = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI listening"); s = @{ design = "spotify"; show_album_art = $true; time_display = "left" } }
             "design-spotify" = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; match_album_highlight = $true } }
           }
           foreach ($name in $shots.Keys) {
@@ -115,6 +117,7 @@ jobs:
               "$name : EnableTransparency=$((Get-ItemProperty -Path $key).EnableTransparency)" | Tee-Object -FilePath ci-glass-info.txt -Append
             }
             $argv = @("--demo","--demo-song",$shots[$name].song,"--demo-start",$shots[$name].at,"--screenshot","$PWD\demo-overlay-$name.png","--quit-after","5")
+            if ($shots[$name].ContainsKey("extra")) { $argv += $shots[$name].extra }
             if ($shots[$name].grab) { $argv += @("--test-backdrop","--screen-grab","$PWD\demo-overlay-$name-screen.png") }
             Start-Process $exe -ArgumentList $argv -Wait
             if (-not (Test-Path "demo-overlay-$name.png")) {
