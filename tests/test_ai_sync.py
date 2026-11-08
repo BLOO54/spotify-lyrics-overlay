@@ -392,3 +392,21 @@ def test_vocal_separation_failure_falls_back(monkeypatch, tmp_path):
     job.vocals_dir = tmp_path                     # no model files there -> separation can't start
     text, res, note = AS.run_job(job, None, 2)
     assert text and res.matched_lines == 3 and "vocal separation didn't work" in note
+
+
+def test_voiced_parts_and_normalise():
+    import numpy as np
+
+    from app.vocals import normalise, voiced_parts
+    rate = 16000
+    y = np.zeros(rate * 10, dtype=np.float32)
+    t = np.arange(rate) / rate
+    for start in (1.0, 2.3, 6.0):                 # three sung bits, the first two close together
+        a = int(start * rate)
+        y[a:a + rate] = 0.02 * np.sin(2 * np.pi * 220 * t)
+    parts = voiced_parts(normalise(y), rate)
+    assert len(parts) == 2, parts                 # the 0.3 s gap is joined, the long one isn't
+    assert abs(parts[0][0] - 0.65) < 0.1 and abs(parts[0][1] - 3.65) < 0.1
+    assert abs(parts[1][0] - 5.65) < 0.1 and abs(parts[1][1] - 7.35) < 0.1
+    assert abs(float(np.abs(normalise(y)).max()) - 0.6) < 0.01
+    assert voiced_parts(np.zeros(rate * 3, dtype=np.float32), rate) == []

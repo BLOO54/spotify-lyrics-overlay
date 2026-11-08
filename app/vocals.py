@@ -81,4 +81,47 @@ class VocalSeparator:
         vocals = np.concatenate(out) if out else x
         y = _resample(vocals, SPLEETER_RATE, rate)
         n = len(audio16k)
-        return y[:n] if len(y) >= n else np.pad(y, (0, n - len(y)))
+        y = y[:n] if len(y) >= n else np.pad(y, (0, n - len(y)))
+        return normalise(y)
+
+
+def normalise(y, target: float = 0.6):
+    """The voice on its own is much quieter than the song - bring it to a normal level."""
+    import numpy as np
+    peak = float(np.percentile(np.abs(y), 99.9)) if len(y) else 0.0
+    if peak < 1e-5:
+        return y
+    return np.clip(y * (target / peak), -1.0, 1.0).astype(np.float32)
+
+
+def voiced_parts(y, rate: int = 16000, min_gap: float = 0.7, pad: float = 0.35) -> list[tuple[float, float]]:
+    """Where someone is singing in a voice-only track: (start, end) in seconds. The quiet parts in
+    between are left out so the speech recognition can't 'hear' words in silence."""
+    import numpy as np
+    hop = int(rate * 0.05)
+    n = len(y) // hop
+    if n == 0:
+        return []
+    env = np.sqrt((np.asarray(y[:n * hop], dtype=np.float32).reshape(n, hop) ** 2).mean(axis=1))
+    loud = float(np.percentile(env, 95))
+    if loud < 1e-5:
+        return []
+    on = env > max(loud * 0.08, 1e-4)
+    parts, start = [], None
+    for i, v in enumerate(on):
+        t = i * hop / rate
+        if v and start is None:
+            start = t
+        elif not v and start is not None:
+            parts.append([start, t])
+            start = None
+    if start is not None:
+        parts.append([start, n * hop / rate])
+    merged: list[list[float]] = []
+    for a, b in parts:
+        if merged and a - merged[-1][1] < min_gap:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+    total = len(y) / rate
+    return [(max(0.0, a - pad), min(total, b + pad)) for a, b in merged if b - a >= 0.25]

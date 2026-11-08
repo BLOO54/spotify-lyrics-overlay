@@ -813,17 +813,21 @@ def load_whisper(model_dir: Path, threads: int = 2):
 
 
 def transcribe(model, audio, language: str | None = None, prompt: str | None = None,
-               threads: int = 2, progress=None) -> list[Heard]:
+               threads: int = 2, progress=None, parts: list | None = None) -> list[Heard]:
     """Run speech recognition on 16 kHz mono float audio; returns every word with its time.
     `model` is a loaded model (load_whisper) or a model folder."""
     own = isinstance(model, (str, Path))
     if own:
         model = load_whisper(Path(model), threads)
     try:
+        extra = {}
+        if parts:                          # voice-only audio: only listen where someone is singing
+            extra = {"clip_timestamps": [x for ab in parts for x in ab], "hallucination_silence_threshold": 2.0}
         segments, info = model.transcribe(
             audio, language=language, word_timestamps=True, vad_filter=False,
             condition_on_previous_text=False, initial_prompt=prompt, beam_size=5,
-            no_speech_threshold=None)      # never skip a part just because the music is louder than the voice
+            no_speech_threshold=None,      # never skip a part just because the music is louder than the voice
+            **extra)
         words: list[Heard] = []
         total = max(len(audio) / SAMPLE_RATE, 0.1)
         for seg in segments:
@@ -1034,6 +1038,7 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
 
     # ---- 1. the audio (voice only, if asked)
     audio_pieces: list[tuple[float, object]] = []
+    voiced: dict[int, list] = {}           # piece number -> where the separated voice is singing
     loud = 0.0
     separator = None
     if job.vocals_dir:
@@ -1051,6 +1056,8 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
             try:
                 audio = separator.isolate(audio, SAMPLE_RATE,
                                           lambda f, d=done, n=seg.seconds: report(w_sep * (d + f * n) / total))
+                from .vocals import voiced_parts
+                voiced[len(audio_pieces)] = voiced_parts(audio, SAMPLE_RATE)
                 if DEBUG_DUMP:
                     _dump_wav(Path(DEBUG_DUMP), audio)
             except Exception as e:
@@ -1068,10 +1075,13 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
     # ---- 2. listen to the whole song
     heard: list[Heard] = []
     done = 0.0
-    for start, audio in audio_pieces:
+    for num, (start, audio) in enumerate(audio_pieces):
         n = len(audio) / SAMPLE_RATE
         part = lambda f, d=done, n=n: report(w_sep + w_pass1 * (d + f * n) / total)
-        for w in transcribe(model, audio, lang, prompt, threads, part):
+        if num in voiced and not voiced[num]:
+            done += n
+            continue                       # nobody sings in this piece
+        for w in transcribe(model, audio, lang, prompt, threads, part, voiced.get(num)):
             heard.append(Heard(w.text, w.start + start, w.end + start))
         done += n
     heard.sort(key=lambda w: w.start)
@@ -1092,8 +1102,14 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
             c0, audio = clip
             span = len(audio) / SAMPLE_RATE
             hint = " ".join(job.lines[i] for i in idxs)[:220]
+            parts = None
+            if voiced:                              # voice-only audio: just the sung bits of this clip
+                from .vocals import voiced_parts
+                parts = voiced_parts(audio, SAMPLE_RATE)
+                if not parts:
+                    continue
             try:
-                again = transcribe(model, audio, lang, hint, threads)
+                again = transcribe(model, audio, lang, hint, threads, None, parts)
             except Exception as e:
                 log.warning("second listen failed: %s", e)
                 break
