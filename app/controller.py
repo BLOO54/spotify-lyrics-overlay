@@ -639,6 +639,8 @@ class Controller(QObject):
         self._apply_visibility()
         if self.settings_dlg and self.s.fixed_height != before:
             self.settings_dlg.refresh()          # show the height that was just frozen
+        if self.meanings_win is not None:
+            self.meanings_win.apply_text_size()
         ai_now = (self.s.ai_sync_enabled, self.s.ai_model, self.s.use_my_files)
         if ai_now != self._ai_prev:
             self._ai_prev = ai_now

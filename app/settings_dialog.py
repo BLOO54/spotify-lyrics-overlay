@@ -228,7 +228,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.s = settings
         self.setWindowTitle(f"{APP_NAME} – Settings")
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setStyleSheet(STYLE)
         self.resize(940, 680)
         self.setMinimumSize(760, 520)
@@ -726,6 +725,13 @@ class SettingsDialog(QDialog):
         f.addRow(holder)
         f.addRow(_hint("Opens a window where you can search any song (or use the one playing), click a lyric "
                        "line and read what it means. It only appears when you open it."))
+        self._w["meanings_text_size"] = ts = QComboBox()
+        ts.addItem("Normal", "normal")
+        ts.addItem("Large", "large")
+        ts.addItem("Extra large", "huge")
+        ts.setCurrentIndex(max(0, ts.findData(self.s.meanings_text_size)))
+        ts.currentIndexChanged.connect(lambda i: self._set("meanings_text_size", ts.itemData(i)))
+        f.addRow("Meaning text size", ts)
 
         sep = QLabel("<b>Genius</b>")
         sep.setObjectName("section")

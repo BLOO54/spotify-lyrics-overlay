@@ -99,7 +99,8 @@ class Settings:
     genius_token: str = ""                # Song meanings: your Genius API access token (not a password)
     meanings_ai: bool = False             # Song meanings: AI explains lines Genius hasn't
     anthropic_key: str = ""               # Song meanings: your Anthropic API key for the AI backup
-    meanings_follow: bool = True          # Song meanings: highlight the line being sung
+    meanings_follow: bool = True
+    meanings_text_size: str = "normal"    # Song meanings: size of the meaning text - normal | large | huge          # Song meanings: highlight the line being sung
     use_my_files: bool = True             # use the songs you synced yourself (files in "my_lyrics")
     ai_sync_enabled: bool = False         # AI sync: listen to each song once and time the lyrics
     ai_model: str = "light"               # "light" (~0.5 GB) | "best" (~1.5 GB)
@@ -174,6 +175,8 @@ class Settings:
         if self.ai_model not in ("light", "best"):
             self.ai_model = "light"
         self.ai_threads = max(1, min(8, int(self.ai_threads)))
+        if self.meanings_text_size not in ("normal", "large", "huge"):
+            self.meanings_text_size = "normal"
         if self.ai_listen not in ("app", "pc"):
             self.ai_listen = "app"
         if self.word_timing_mode not in ("syllables", "letters"):

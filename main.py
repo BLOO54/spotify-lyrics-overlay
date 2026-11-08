@@ -311,10 +311,11 @@ def main() -> int:
                 ctl.settings_dlg.nav.setCurrentRow(7)
             QTimer.singleShot(1500, fill)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
-        elif what == "meanings":
+        elif what in ("meanings", "meanings-large"):
             def fill():
                 from app.meanings import Explanation, SongHit, SongMeanings
                 ctl.s.meanings_ai = True
+                ctl.s.meanings_text_size = "large" if what == "meanings-large" else "normal"
                 ctl.open_meanings()
                 win = ctl.meanings_win
                 win.resize(1060, 640)

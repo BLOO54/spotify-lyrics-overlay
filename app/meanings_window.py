@@ -21,11 +21,12 @@ from .settings_dialog import STYLE
 log = logging.getLogger(__name__)
 
 DEFAULT_ACCENT = "#8b5cf6"
+TEXT_SIZES = {"normal": 14, "large": 17, "huge": 21}     # Settings → Song meanings → Meaning text size
 EXPLAINED = Qt.ItemDataRole.UserRole + 1
 SINGING = Qt.ItemDataRole.UserRole + 2
 
 
-def _style(accent: str) -> str:
+def _style(accent: str, text_px: int = 14) -> str:
     a = QColor(accent)
     h = accent.lstrip("#")
     r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4)) if len(h) == 6 else (139, 92, 246)
@@ -56,7 +57,7 @@ QListWidget#lyrics, QListWidget#results {{ background: transparent; border: none
 QListWidget#lyrics::item, QListWidget#results::item {{ padding: 8px 14px; border-radius: 10px; }}
 QListWidget#lyrics::item:hover, QListWidget#results::item:hover {{ background: #1c1b26; }}
 QListWidget#lyrics::item:selected, QListWidget#results::item:selected {{ background: transparent; color: #ffffff; }}
-QTextBrowser#meaning {{ background: transparent; border: none; color: #e6e6f0; font-size: 14px; }}
+QTextBrowser#meaning {{ background: transparent; border: none; color: #e6e6f0; font-size: {text_px}px; }}
 QLabel#credit {{ color: #6f6f88; font-size: 11px; }}
 """
 
@@ -133,9 +134,8 @@ class MeaningsWindow(QWidget):
         self.setWindowTitle("Song meanings")
         self.setObjectName("meaningsRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # stays above other windows (including Settings) while it's open; closing it hides it again
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setStyleSheet(_style(self.accent))
+        # a normal window: it opens in front, but never covers your game
+        self.setStyleSheet(_style(self.accent, self._text_px()))
         self.resize(1100, 760)
         self.setMinimumSize(820, 560)
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="meanings")
@@ -149,6 +149,7 @@ class MeaningsWindow(QWidget):
         self.rows: list[int] = []
         self._now_row = -1
         self._ai_quote = ""
+        self._last_body = ""
         self._thumbs: dict[str, QIcon] = {}
 
         root = QVBoxLayout(self)
@@ -319,13 +320,24 @@ class MeaningsWindow(QWidget):
         return req
 
     def _html(self, body: str):
-        self.meaning.setHtml(f"<div style='line-height:155%'>{body}</div>")
+        self._last_body = body
+        px = self._text_px()
+        self.meaning.setHtml(f"<div style='line-height:155%; font-size:{px}px'>{body}</div>")
 
     def _set_accent(self, colour: str):
         if colour != self.accent:
             self.accent = colour
-            self.setStyleSheet(_style(colour))
+            self.setStyleSheet(_style(colour, self._text_px()))
             self.lyrics.viewport().update()
+
+    def _text_px(self) -> int:
+        return TEXT_SIZES.get(self.s.meanings_text_size, 14)
+
+    def apply_text_size(self):
+        """The text-size setting changed: restyle and redraw what's on the right."""
+        self.setStyleSheet(_style(self.accent, self._text_px()))
+        if self._last_body:
+            self._html(self._last_body)
 
     def _set_art(self, img_bytes: bytes | None):
         pm = _rounded(img_bytes, 96)
@@ -367,12 +379,13 @@ class MeaningsWindow(QWidget):
     def _quote(self, text: str) -> str:
         return (f"<table width='100%' cellspacing='0' cellpadding='0' style='margin:4px 0 14px 0'><tr>"
                 f"<td width='4' bgcolor='{self.accent}'></td><td width='14'></td>"
-                f"<td><span style='font-size:19px; font-weight:600; color:#ffffff'>{html.escape(text)}</span></td>"
+                f"<td><span style='font-size:{self._text_px() + 5}px; font-weight:600; color:#ffffff'>"
+                f"{html.escape(text)}</span></td>"
                 "</tr></table>")
 
     def _card(self, inner: str, bg: str = "#1b1926") -> str:
         return (f"<table width='100%' cellspacing='0' cellpadding='16' bgcolor='{bg}' "
-                f"style='margin-top:10px'><tr><td>{inner}</td></tr></table>")
+                f"style='margin-top:10px; font-size:{self._text_px()}px'><tr><td>{inner}</td></tr></table>")
 
     def _empty(self, icon: str, title: str, text: str) -> str:
         return (f"<p align='center' style='margin-top:60px; font-size:40px'>{icon}</p>"
@@ -505,7 +518,8 @@ class MeaningsWindow(QWidget):
         bits = []
         if m and m.about:
             about = html.escape(m.about).replace(chr(10), "<br>")
-            bits.append("<p style='font-size:16px; font-weight:600; color:#ffffff'>About this song</p>"
+            bits.append(f"<p style='font-size:{self._text_px() + 2}px; font-weight:600; color:#ffffff'>"
+                        "About this song</p>"
                         f"<p style='color:#d6d6e2'>{about}</p>")
         elif m:
             bits.append("<p style='color:#9a9ab0'>Genius has no description for this song.</p>")
