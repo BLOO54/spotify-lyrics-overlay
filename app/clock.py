@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 
 # Re-sync if our stopwatch disagrees with Spotify by more than this (seconds).
 RESYNC_THRESHOLD = 0.35
+# Smaller differences than this are caught up smoothly (a little faster / slower for a moment)
+# instead of jumping; bigger ones (a seek) jump straight there.
+GLIDE_LIMIT = 1.5
 
 
 @dataclass
@@ -34,6 +37,9 @@ class PlaybackClock:
         self._playing = False
         self._duration = 0.0
         self._last_raw: tuple[float, datetime | None] | None = None
+        self._glide = 0.0              # correction still to fade out (seconds)
+        self._glide_start = 0.0
+        self._glide_len = 0.0
 
     # ------------------------------------------------------------------
     @property
@@ -44,6 +50,12 @@ class PlaybackClock:
         pos = self._anchor_pos
         if self._playing:
             pos += self._time() - self._anchor_time
+            if self._glide:
+                left = 1.0 - (self._time() - self._glide_start) / self._glide_len
+                if left > 0:
+                    pos += self._glide * left
+                else:
+                    self._glide = 0.0
         if self._duration > 0:
             pos = min(pos, self._duration)
         return max(0.0, pos)
@@ -53,11 +65,13 @@ class PlaybackClock:
         self._anchor_time = self._time()
         self._playing = playing
         self._last_raw = None
+        self._glide = 0.0
 
     def _set(self, pos: float, playing: bool) -> None:
         self._anchor_pos = pos
         self._anchor_time = self._time()
         self._playing = playing
+        self._glide = 0.0
 
     def estimate_reported_now(self, r: PlaybackReport) -> float:
         """Where the player is *right now*, according to its last report."""
@@ -93,5 +107,14 @@ class PlaybackClock:
             # Same old report: our own stopwatch is the better source.
             return
         target = self.estimate_reported_now(r)
-        if abs(target - self.position()) > RESYNC_THRESHOLD:
+        now = self.position()
+        diff = target - now
+        if abs(diff) > GLIDE_LIMIT:
+            self._set(target, True)                 # a real jump (seek): go straight there
+        elif abs(diff) > RESYNC_THRESHOLD:
+            # small drift: be at the right place, but fade the difference out so the lyrics never
+            # jump or run backwards (at most 1/3 slower or faster while catching up)
             self._set(target, True)
+            self._glide = now - target
+            self._glide_start = self._time()
+            self._glide_len = max(0.5, abs(self._glide) * 3.0)

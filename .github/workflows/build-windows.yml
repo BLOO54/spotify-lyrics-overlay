@@ -148,6 +148,14 @@ jobs:
           Get-Content $file.FullName | Tee-Object -FilePath ci-tap-check.txt -Append
           if (-not (Test-Path demo-overlay-tap-window.png)) { throw "no picture of the sync window" }
 
+      - name: Frame rhythm - how evenly the lyrics are drawn (normal vs precise timer)
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $p = Start-Process $exe -ArgumentList "--demo","--demo-start","4","--frame-test","$PWD\ci-frame-test.json" -PassThru
+          if (-not $p.WaitForExit(60000)) { Stop-Process $p -Force; throw "frame test hung" }
+          if (-not (Test-Path ci-frame-test.json)) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 30; throw "no frame report" }
+          Get-Content ci-frame-test.json
+
       - name: Pictures of the Settings window and a pop-up
         run: |
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
@@ -333,6 +341,7 @@ jobs:
             ci-app-audio.json
             ci-x-check.txt
             ci-ai-compare.txt
+            ci-frame-test.json
             ci-ai-hard-*.json
             ci-ai-max.txt
             ci-ai-max-*.json

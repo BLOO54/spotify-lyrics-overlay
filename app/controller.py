@@ -15,7 +15,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QAbstractNativeEventFilter, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -163,6 +163,9 @@ class Controller(QObject):
         self._build_tray()
 
         self.frame_timer = QTimer(self)
+        # "precise": Windows' normal timer only ticks every ~15.6 ms, so a 16 ms timer fires after 16 or 31 ms
+        # at random - that uneven rhythm is what makes moving lyrics look jerky
+        self.frame_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.frame_timer.timeout.connect(self._tick)
         self.frame_timer.start(FRAME_MS)
         self.top_timer = QTimer(self)

@@ -198,6 +198,62 @@ def _make_backdrop(app):
     return w
 
 
+def _schedule_frame_test(app, ctl, out):
+    """CI: draw the Spotify look for a few seconds with Windows' normal timer, then the precise one,
+    and write how evenly spaced the frames were and how long each drawing took."""
+    import json
+    import statistics
+    import time as _t
+
+    from PySide6.QtCore import Qt, QTimer
+    ctl.s.design = "spotify"
+    ctl.s.highlight_style = "wipe"
+    ctl.overlay.apply_settings() if hasattr(ctl.overlay, "apply_settings") else None
+    ov = ctl.overlay
+    ticks, paints = [], []
+    real_paint = type(ov).paintEvent
+
+    def timed_paint(e):
+        t0 = _t.perf_counter()
+        real_paint(ov, e)
+        paints.append((_t.perf_counter() - t0) * 1000)
+    ov.paintEvent = timed_paint
+    real_tick = ctl._tick
+
+    def tick():
+        ticks.append(_t.perf_counter())
+        real_tick()
+    ctl.frame_timer.timeout.disconnect()
+    ctl.frame_timer.timeout.connect(tick)
+    report = {}
+
+    def stats(name):
+        gaps = [(b - a) * 1000 for a, b in zip(ticks, ticks[1:])]
+        gaps.sort()
+        report[name] = {"frames": len(ticks), "gap_ms_median": round(statistics.median(gaps), 2),
+                        "gap_ms_p95": round(gaps[int(len(gaps) * 0.95)], 2), "gap_ms_max": round(gaps[-1], 2),
+                        "uneven_frames_pct": round(100 * sum(1 for g in gaps if g > 24) / len(gaps), 1),
+                        "paint_ms_median": round(statistics.median(paints), 2) if paints else None,
+                        "paint_ms_p95": round(sorted(paints)[int(len(paints) * 0.95)], 2) if paints else None}
+        ticks.clear()
+        paints.clear()
+
+    def phase(name, timer_type, then):
+        ctl.frame_timer.stop()
+        ctl.frame_timer.setTimerType(timer_type)
+        ctl.frame_timer.start(16)
+        ticks.clear()
+        paints.clear()
+        QTimer.singleShot(4000, lambda: (stats(name), then()))
+
+    def done():
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=1)
+        app.quit()
+    QTimer.singleShot(2500, lambda: phase("coarse", Qt.TimerType.CoarseTimer,
+                                          lambda: phase("precise", Qt.TimerType.PreciseTimer, done)))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--demo", action="store_true")
@@ -219,6 +275,7 @@ def main() -> int:
     parser.add_argument("--ai-note", help="CI: show this AI sync note in the overlay header")
     parser.add_argument("--ai-progress", type=float, help="CI: progress (0-1) shown with --ai-note")
     parser.add_argument("--listen-test", help="CI: try recording the PC's sound, report to FILE")
+    parser.add_argument("--frame-test", help="CI: measure how evenly the lyrics are drawn, report to FILE")
     parser.add_argument("--app-audio-probe", nargs=2, metavar=("PID", "OUT"),
                         help="check that one app's sound can be recorded (used by AI sync)")
     args, _ = parser.parse_known_args()
@@ -295,6 +352,8 @@ def main() -> int:
         QTimer.singleShot(int(max(1.0, args.quit_after - 0.5) * 1000), snap)
     if args.test_tap:
         _schedule_tap_test(app, ctl, args.test_tap)
+    if args.frame_test:
+        _schedule_frame_test(app, ctl, args.frame_test)
     if args.ai_note:
         note_timer = QTimer()
         note_timer.timeout.connect(lambda: ctl.overlay.set_ai_note(args.ai_note.replace("_", " "),

@@ -168,6 +168,24 @@ def test_clock_ignores_tiny_drift_and_bad_timestamps():
     assert abs(c.position() - 50.0) < 1e-6
 
 
+def test_clock_catches_up_smoothly_instead_of_jumping():
+    ft = FakeTime()
+    c = PlaybackClock(ft.mono, ft.now)
+    c.update(PlaybackReport(10.0, True, ft.utc, 200))
+    ft.advance(1.0)
+    c.update(PlaybackReport(11.9, True, ft.utc, 200))    # Spotify says we're 0.9 s behind
+    assert abs(c.position() - 11.0) < 1e-6              # no jump right now...
+    last = c.position()
+    for _ in range(40):                                  # ...it moves forward a little faster
+        ft.advance(0.1)
+        pos = c.position()
+        assert 0.1 * 0.66 <= pos - last <= 0.1 * 1.34 + 1e-9, pos - last
+        last = pos
+    assert abs(c.position() - (11.9 + 4.0)) < 1e-6       # and is exactly right afterwards
+    c.update(PlaybackReport(100.0, True, ft.utc, 200))   # a seek still jumps straight there
+    assert abs(c.position() - 100.0) < 1e-6
+
+
 def test_clock_clamps_to_duration():
     ft = FakeTime()
     c = PlaybackClock(ft.mono, ft.now)

@@ -32,6 +32,7 @@ class FullscreenLyrics(QWidget):
         self._hint_until = 0.0
         self._clock = 0.0
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)      # even frame rhythm (see controller)
         self.timer.timeout.connect(self._tick)
 
     # ------------------------------------------------------------------ open / close

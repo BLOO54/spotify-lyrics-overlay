@@ -34,7 +34,7 @@ from .palette import extract_palette, mix_hex
 
 log = logging.getLogger(__name__)
 
-LINE_ANIM_SECONDS = 0.28
+LINE_ANIM_SECONDS = 0.45     # how long lines take to glide to their new place
 COLOUR_FADE_SECONDS = 0.45     # how quickly colours glide to a new song's palette
 COLOUR_KEYS = ("text_color", "highlight_color", "highlight_color2", "background_color")
 SUNG_FADE = 0.35
@@ -67,6 +67,12 @@ def _with_alpha(c: QColor, a: float) -> QColor:
 def _ease(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return 1 - (1 - t) ** 3
+
+
+def _glide(t: float) -> float:
+    """Gentle start and gentle stop (for lines moving): no sudden jump at the start like a plain ease-out."""
+    t = max(0.0, min(1.0, t))
+    return 4 * t * t * t if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
 
 
 def _clamp01(v: float) -> float:
@@ -122,6 +128,7 @@ class OverlayWindow(QWidget):
         self._dropped: set = set()
         self._line_idx = -2
         self._anim_start = 0.0
+        self._fade_from = None
         self._drag_offset = None
         self._hover = False
         self.apply_settings()
@@ -1128,7 +1135,7 @@ class OverlayWindow(QWidget):
             self._fade_from = self._line_idx if idx == self._line_idx + 1 else None
             self._line_idx = idx
             self._anim_start = time.monotonic()
-        a = _ease((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
+        a = _glide((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
         lines = ly.lines
         slide = (1 - a) * self._ctx_h * 0.8
 
@@ -1137,8 +1144,10 @@ class OverlayWindow(QWidget):
                                     self._side_colour("prev", a), area, self._row_caps["prev"],
                                     soft=self.design == "aurora")
         if "next" in rows and idx + 1 < len(lines):
+            # the new "next" line fades in as it slides up, instead of popping in
             self._paint_simple_line(p, ctx_f, self._main_text(idx + 1) or "♪", cy("next") + slide * 0.5,
-                                    self._side_colour("next", 1.0), area, self._row_caps["next"],
+                                    self._side_colour("next", a if self._fade_from is not None else 1.0),
+                                    area, self._row_caps["next"],
                                     soft=self.design == "aurora")
 
         if idx >= 0 and not lines[idx].is_break and "trans" in rows and self.extras is None \
