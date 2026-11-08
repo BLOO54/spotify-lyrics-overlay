@@ -849,6 +849,8 @@ def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store
     t0 = time.time()
     store = ModelStore(Path(store_dir) if store_dir else None)
     opts = {o.strip() for o in (options or "").split(",") if o.strip()}
+    global DEBUG_DUMP
+    DEBUG_DUMP = str(Path(out).with_suffix(".vocals.wav")) if "vocals" in opts else None
     report: dict = {"model": model, "options": sorted(opts)}
     try:
         if not store.installed(model):
@@ -948,6 +950,21 @@ class Job:
     vocals_dir: Path | None = None     # separate the voice from the music first (model folder), or None
 
 
+DEBUG_DUMP: str | None = None       # CI only: save the separated voice here, to check it
+
+
+def _dump_wav(path: Path, audio) -> None:
+    import wave
+
+    import numpy as np
+    a = np.clip(np.asarray(audio, dtype=np.float32), -1, 1)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes((a * 32767).astype(np.int16).tobytes())
+
+
 def missed_windows(res: AlignResult, lines: list[str], max_len: float = 26.0) -> list[tuple[float, float, list]]:
     """Stretches of the song where lines weren't heard: (start, end, line numbers), each short
     enough for one listen (speech recognition works on up to 30 s at a time)."""
@@ -1034,6 +1051,8 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
             try:
                 audio = separator.isolate(audio, SAMPLE_RATE,
                                           lambda f, d=done, n=seg.seconds: report(w_sep * (d + f * n) / total))
+                if DEBUG_DUMP:
+                    _dump_wav(Path(DEBUG_DUMP), audio)
             except Exception as e:
                 log.warning("vocal separation failed: %s", e)
                 separator = None

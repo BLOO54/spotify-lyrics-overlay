@@ -66,6 +66,11 @@ class VocalSeparator:
             stereo = np.ascontiguousarray(np.stack([piece, piece]))
             res = self.sp.process(sample_rate=SPLEETER_RATE, samples=stereo)
             voc = np.asarray(res.stems[0].data, dtype=np.float32)
+            if k == 0:
+                log.info("vocal separation: in %s @%d Hz -> stems %d, vocals %s @%s Hz, other %s",
+                         stereo.shape, SPLEETER_RATE, len(res.stems), voc.shape,
+                         getattr(res, "sample_rate", "?"),
+                         np.asarray(res.stems[1].data).shape if len(res.stems) > 1 else None)
             voc = voc.mean(axis=0) if voc.ndim == 2 else voc
             sr = int(getattr(res, "sample_rate", SPLEETER_RATE) or SPLEETER_RATE)
             voc = _resample(voc, sr, SPLEETER_RATE)

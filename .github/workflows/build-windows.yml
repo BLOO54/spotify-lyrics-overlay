@@ -337,6 +337,7 @@ jobs:
             ci-ai-max.txt
             ci-ai-max-*.json
             ci-ai-hard-song.wav
+            ci-ai-hard-vocals.vocals.wav
             ci-ai-test-song.wav
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false
