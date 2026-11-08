@@ -128,6 +128,10 @@ class Controller(QObject):
         self._ai_ctx = None
         self._ai_jobs = 0
         self._ai_job_key = None         # the song the AI is working on right now
+        self._recent_ai: list[dict] = []    # this session's AI results, newest first (for the AI sync window)
+        self.ai_win = None
+        self.full_win = None
+        self._ai_skipped: dict = {}         # song key -> why the AI didn't sync it this time
         self._ai_job_frac = None
         self._ai_download = None        # (model name, cancel event) while downloading
         self._ai_dl_text = ""
@@ -217,6 +221,9 @@ class Controller(QObject):
         act_tap.triggered.connect(self.open_tap_sync)
         self.act_ai_redo = QAction("AI sync: listen to this song again", self.menu)
         self.act_ai_redo.triggered.connect(self.ai_redo_song)
+        act_full = QAction("Full-screen lyrics", self.menu)
+        act_full.triggered.connect(self.open_fullscreen)
+        self.act_full = act_full
         act_meanings = QAction("Song meanings…", self.menu)
         act_meanings.triggered.connect(self.open_meanings)
         self.act_meanings = act_meanings
@@ -238,7 +245,7 @@ class Controller(QObject):
                             "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
                             "hk_version": (act_version, "Try another lyrics version")}
         self._label_menu()
-        for a in (self.act_show, self.act_click, self.act_ai, act_settings, act_meanings):
+        for a in (self.act_show, self.act_click, self.act_ai, act_settings, act_meanings, act_full):
             self.menu.addAction(a)
         self.menu.addSeparator()
         for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
@@ -443,6 +450,8 @@ class Controller(QObject):
             self.settings_dlg.ai_status_wanted.connect(self._refresh_ai_status)
             self.settings_dlg.history_clear_requested.connect(self._clear_history)
             self.settings_dlg.meanings_requested.connect(self.open_meanings)
+            self.settings_dlg.ai_window_requested.connect(self.open_ai_window)
+            self.settings_dlg.fullscreen_requested.connect(self.open_fullscreen)
             self.settings_dlg.synced_wanted.connect(self._refresh_synced)
             self.settings_dlg.synced_remove_requested.connect(self.remove_synced)
             self.settings_dlg.synced_remove_all_requested.connect(self.remove_synced_many)
@@ -674,6 +683,9 @@ class Controller(QObject):
             self.unregister_hotkeys()
             if self.ai_listener is not None:
                 self.ai_listener.stop()
+            for win in (self.meanings_win, self.ai_win, self.full_win):
+                if win is not None:
+                    win.close()
             if self.meanings_win is not None:
                 self.meanings_win.close()
                 self.meanings_win.pool.shutdown(wait=False, cancel_futures=True)
@@ -899,6 +911,8 @@ class Controller(QObject):
         self._update_ai_indicator()
         if heard < max(need, 25.0):
             log.info("AI sync: only %.0f s of %s heard - not enough, will listen next time", heard, title)
+            self._ai_skipped[key] = (f"Only heard {heard:.0f} s of this song before it changed – it needs most of "
+                                     "the song, so it'll listen again next time it plays.")
             return
         job = ai_sync.Job(key, title, artist, lines, orig, rec)
         model_dir = self.ai_store.path(self.s.ai_model)
@@ -942,16 +956,27 @@ class Controller(QObject):
             self._ai_job_key, self._ai_job_frac = None, None
         self._update_ai_indicator()
         if isinstance(out, Exception):
+            self._recent_ai.insert(0, {"title": job.title, "artist": job.artist, "ok": False,
+                                       "message": f"error: {out}"})
+            self._refresh_ai_window()
             self.notify(f"AI sync couldn't time “{job.title}” ({out}). The normal timing is still used.",
                         "warning", 6000, keep=True)
             return
         text, res, msg = out
         if not text:
             log.info("AI sync: %s - %s", job.title, msg)
+            self._recent_ai.insert(0, {"title": job.title, "artist": job.artist, "ok": False, "message": msg,
+                                       "lines": job.lines, "heard": list(res.heard) if res is not None else []})
+            self._refresh_ai_window()
             self.notify(f"AI sync: “{job.title}” – {msg}.", "info", 5000, keep=True)
             return
-        self.ai_lyrics.save(job.title, job.artist, text)
+        saved = self.ai_lyrics.save(job.title, job.artist, text)
+        if res is not None:
+            ai_sync.save_details(saved, job.lines, res)
+        self._recent_ai.insert(0, {"title": job.title, "artist": job.artist, "ok": True, "message": msg,
+                                   "path": str(saved)})
         self._refresh_synced()
+        self._refresh_ai_window()
         self.notify(f"AI synced “{job.title}” ({msg}). It uses the new timing from now on.", "success", 5000,
                     keep=True)
         if self.track and self.track.title == job.title and self.track.artist == job.artist:
@@ -1097,6 +1122,7 @@ class Controller(QObject):
             if p.resolve().parent != folder.resolve() or p.suffix.lower() != ".lrc":
                 raise ValueError("not a synced-song file")
             p.unlink()
+            p.with_suffix(".ai.json").unlink(missing_ok=True)       # AI details, if any
             return True
         except Exception as e:
             log.warning("could not remove %s: %s", path, e)
@@ -1104,14 +1130,8 @@ class Controller(QObject):
 
     def remove_synced(self, kind: str, path: str):
         p = Path(path)
-        folder = self.my_lyrics.folder if kind == "mine" else self.ai_lyrics.folder
-        try:
-            if p.resolve().parent != folder.resolve() or p.suffix.lower() != ".lrc":
-                raise ValueError("not a synced-song file")
-            p.unlink()
-        except Exception as e:
-            log.warning("could not remove %s: %s", path, e)
-            self.notify(f"Couldn't remove that file ({e}).", "warning", 4000)
+        if not self._delete_synced_file(kind, path):
+            self.notify("Couldn't remove that file.", "warning", 4000)
             self._refresh_synced()
             return
         name = p.stem.split(" - ", 1)[-1]
@@ -1120,6 +1140,117 @@ class Controller(QObject):
         if self.track and self.track.title:
             self._fetch(self.track)          # if it was this song, switch right away
         self._refresh_synced()
+
+    # ------------------------------------------------------------ full-screen lyrics
+    def open_fullscreen(self):
+        if self.full_win is None:
+            from .fullscreen import FullscreenLyrics
+            self.full_win = FullscreenLyrics(self)
+        screen = self.overlay.screen() if hasattr(self.overlay, "screen") else None
+        self.full_win.open_on(screen)
+
+    # ------------------------------------------------------------ AI sync window
+    def open_ai_window(self):
+        if self.ai_win is None:
+            from .ai_window import AiSyncWindow
+            self.ai_win = AiSyncWindow(self)
+        self.ai_win.show()
+        self.ai_win.raise_()
+        self.ai_win.activateWindow()
+        self.ai_win.refresh()
+
+    def _refresh_ai_window(self):
+        if self.ai_win is not None and self.ai_win.isVisible():
+            self.ai_win.refresh()
+
+    def ai_snapshot(self) -> dict:
+        """Everything the AI sync window shows, in plain words."""
+        s = self.s
+        why = ai_sync.runtime_available()
+        name = s.ai_model
+        label, size = ai_sync.MODELS[name][1], ai_sync.MODELS[name][2]
+        installed = self.ai_store.installed(name)
+        lis = self.ai_listener
+        spotify_pid = None
+        try:
+            from .app_audio import find_app_pid
+            spotify_pid = find_app_pid("Spotify.exe")
+        except Exception:
+            pass
+        r = self._last_result
+        # ---- what's happening with the song playing now
+        now = {"title": self.track.title if self.track else "", "artist": self.track.artist if self.track else "",
+               "state": "", "detail": "", "progress": None}
+        if not (self.track and self.track.title):
+            now["state"] = "Nothing playing"
+            now["detail"] = "Play a song in Spotify."
+        elif not s.ai_sync_enabled:
+            now["state"] = "AI sync is off"
+            now["detail"] = "Turn it on above (or in the tray menu)."
+        elif why:
+            now["state"] = "Not available"
+            now["detail"] = why
+        elif not installed:
+            now["state"] = "No model downloaded"
+            now["detail"] = f"Download the {label} model in Settings → Lyrics & translation → AI sync."
+        elif self._ai_job_key == self.track_key and self._ai_jobs:
+            now["state"] = "Working out the timing"
+            now["detail"] = "The AI is matching what it heard to the lyrics."
+            now["progress"] = self._ai_job_frac
+        elif r is not None and r.source == "AI sync":
+            now["state"] = "Already AI-synced ✔"
+            now["detail"] = "This song uses the timing the AI worked out. Tray → \"AI sync: listen to this song " \
+                            "again\" redoes it."
+        elif r is not None and r.source == "my file":
+            now["state"] = "Using your own synced file"
+            now["detail"] = "Your own timing comes first. Turn off \"Use my own synced files\" to let the AI sync it."
+        elif r is None:
+            now["state"] = "Waiting for lyrics"
+        elif r.instrumental or not (r.synced or r.plain):
+            now["state"] = "No lyrics to sync"
+        elif self._ai_ctx is not None and lis is not None and lis.peek() is not None:
+            rec = lis.peek()
+            need = 0.95 * rec.duration if rec.duration else 0
+            now["state"] = "Listening"
+            now["detail"] = (f"Heard {rec.covered():.0f} s of {rec.duration:.0f} s"
+                             f" ({lis.method or 'starting…'}). It starts working once the song is nearly over.")
+            now["progress"] = min(1.0, rec.covered() / need) if need else None
+        elif self.track_key in self._ai_skipped:
+            now["state"] = "Will try again next time"
+            now["detail"] = self._ai_skipped[self.track_key]
+        else:
+            now["state"] = "Waiting"
+            now["detail"] = "It listens from when the lyrics appear until the song ends."
+        # ---- the checklist
+        need = [
+            (why is None, "Speech recognition is included in this app" if why is None else f"Not available: {why}"),
+            (installed, f"{label} model downloaded ({size})" if installed else
+             f"Download a model – Settings → Lyrics & translation → AI sync"),
+            (s.ai_sync_enabled, "AI sync is on" if s.ai_sync_enabled else "Turn AI sync on"),
+            (spotify_pid is not None, "Spotify is open" if spotify_pid else "Open Spotify"),
+        ]
+        if s.ai_listen == "app":
+            if lis is not None and lis.app_note:
+                need.append((False, f"Listening to the whole PC instead of only Spotify: {lis.app_note}"))
+            elif lis is not None and lis.method == "Spotify only":
+                need.append((True, "Hearing Spotify by itself (game sound is ignored)"))
+            else:
+                need.append((None, "Will listen to Spotify by itself once a song plays"))
+        else:
+            need.append((None, "Listening to everything the PC plays (setting: Listen to → Everything)"))
+        if lis is not None and lis.error:
+            need.append((False, lis.error))
+        # ---- working on another song?
+        working = None
+        if self._ai_jobs and self._ai_job_key is not None and self._ai_job_key != self.track_key:
+            working = {"progress": self._ai_job_frac, "queued": max(0, self._ai_jobs - 1)}
+        from .my_lyrics import list_synced
+        songs = list_synced(self.ai_lyrics.folder, "ai")
+        for e in songs:
+            e["details"] = ai_sync.load_details(Path(e["path"]))
+        return {"enabled": s.ai_sync_enabled, "model": f"{label} ({size})", "installed": installed,
+                "threads": s.ai_threads, "now": now, "need": need, "working": working,
+                "recent": list(self._recent_ai[:20]), "songs": songs}
 
     def _clear_history(self):
         self.history.clear()

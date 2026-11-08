@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.17.4.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.18.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.17.4.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.18.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -197,6 +197,17 @@ have unsynced lyrics online.
   way (needs Windows 10 version 2004 or newer, or Windows 11 - otherwise it falls back to everything the PC
   plays, and Settings says so). It uses the speech-recognition model Whisper (by OpenAI) through `faster-whisper`, running entirely
   on your PC; the model is downloaded once from Hugging Face.
+
+### 🖥 Full-screen lyrics
+Tray menu → **Full-screen lyrics** (or Settings → Layout): the song playing now, with big lyrics over its blurred
+album art, word-by-word, and a progress bar. Esc, F11 or a double-click closes it. It's a normal window, so it never
+sits on top of a game by itself.
+
+### ✦ AI sync window
+Settings → **AI sync** → *Open the AI sync window*: what the AI is doing right now (listening / working, with
+progress), a checklist of what it needs, and every song it synced - pick one to see which lyric lines it **heard**
+✔ and which it **missed** ✖ (missed lines are timed from the lines around them). The heard / missed list is saved
+for songs synced from version 1.18 on.
 
 ### 💬 Song meanings
 Like Genius, inside the app: Settings → **Song meanings** → **Open song meanings** (or tray → *Song meanings…*).

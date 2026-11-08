@@ -310,7 +310,7 @@ def main() -> int:
                 ctl.history.add("AI sync: “Loud Song” – only heard 6 of 40 lines clearly - kept the normal timing.", "info")
                 ctl.history.add("AI sync is ready. It learns each song the first time it plays to the end.", "success")
                 ctl.open_settings()
-                ctl.settings_dlg.nav.setCurrentRow(7)
+                ctl.settings_dlg.nav.setCurrentRow(8)
             QTimer.singleShot(1500, fill)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
         elif what in ("meanings", "meanings-large"):
@@ -354,6 +354,31 @@ def main() -> int:
                 ctl.settings_dlg._reset_clicked()
             QTimer.singleShot(1500, arm)
             QTimer.singleShot(2600, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
+        elif what == "fullscreen":
+            QTimer.singleShot(1200, ctl.open_fullscreen)
+            QTimer.singleShot(3400, lambda: ctl.full_win and ctl.full_win.grab().save(file))
+        elif what == "aiwindow":
+            def show_ai():
+                from pathlib import Path as _P
+                from app import ai_sync as _A
+                ctl.s.ai_sync_enabled = True
+                lines = ["Lights are racing through the night", "Every pixel burning bright",
+                         "Hold the line and don't let go", "", "We're the final boss of the show",
+                         "Neon rivers in the sky", "Never stop and never die"]
+                path = ctl.ai_lyrics.save("Neon Horizon", "Demo Band",
+                                          "[ti:Neon Horizon]\n[ar:Demo Band]\n[#:AI heard 5/6 lines]\n[00:01.00]x\n")
+                res = _A.AlignResult([1.0] * 7, [None] * 7, [None] * 7, 5, 6, 0.9,
+                                     [True, True, False, False, True, True, True])
+                _A.save_details(_P(path), lines, res)
+                ctl._recent_ai.insert(0, {"title": "Loud Song", "artist": "Somebody", "ok": False,
+                                          "message": "only heard 6 of 40 lines clearly - kept the normal timing"})
+                ctl.open_ai_window()
+                ctl.ai_win.refresh()
+                for k in range(ctl.ai_win.songs.count()):
+                    if ctl.ai_win.songs.item(k).text().startswith("Neon Horizon"):
+                        ctl.ai_win.songs.setCurrentRow(k)
+            QTimer.singleShot(1500, show_ai)
+            QTimer.singleShot(3300, lambda: ctl.ai_win and ctl.ai_win.grab().save(file))
         elif what == "synced":
             def show_synced():
                 ctl.my_lyrics.save("birdbrain", "Jamie Paige", "[ti:birdbrain]\n[ar:Jamie Paige]\n[00:01.00]x\n")
@@ -362,7 +387,7 @@ def main() -> int:
                 ctl.ai_lyrics.save("Midnight Drive", "The Example",
                                    "[ti:Midnight Drive]\n[ar:The Example]\n[#:AI heard 22/25 lines]\n[00:01.00]x\n")
                 ctl.open_settings()
-                ctl.settings_dlg.nav.setCurrentRow(6)
+                ctl.settings_dlg.nav.setCurrentRow(7)
             QTimer.singleShot(1500, show_synced)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
         elif what == "meanings-search":

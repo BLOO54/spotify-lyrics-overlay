@@ -141,6 +141,7 @@ class AlignResult:
     matched_lines: int
     lyric_lines: int
     coverage: float         # share of lyric words the AI heard
+    heard: list = field(default_factory=list)   # per line: True = the AI heard it, False = timing was filled in
 
     @property
     def quality(self) -> float:
@@ -213,11 +214,12 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
         else:
             last = starts[i]
 
+    heard_flags = [starts[i] is not None for i in range(n)]
     _fill_gaps(lines, starts, orig_starts, line_tok)
     word_times = [_line_word_times(lines[i], starts[i], _next_start(starts, i), words_t[i])
                   if words_t[i] else None for i in range(n)]
     coverage = len(anchors) / max(len(lyr), 1)
-    return AlignResult(starts, word_times, ends, matched, lyric_lines, coverage)
+    return AlignResult(starts, word_times, ends, matched, lyric_lines, coverage, heard_flags)
 
 
 def _next_start(starts, i):
@@ -322,6 +324,27 @@ def _line_word_times(text: str, start, next_start, heard: dict):
         out.append((s, e))
         prev = s
     return out
+
+
+def details_path(lrc_path: Path) -> Path:
+    return lrc_path.with_suffix(".ai.json")
+
+
+def save_details(lrc_path: Path, lines: list[str], res: AlignResult) -> None:
+    """Next to an AI-synced song: which lines the AI heard and which it had to fill in."""
+    try:
+        data = {"lines": [ln for ln in lines], "heard": [bool(h) for h in res.heard],
+                "matched": res.matched_lines, "total": res.lyric_lines}
+        details_path(lrc_path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        log.exception("could not save AI sync details")
+
+
+def load_details(lrc_path: Path) -> dict | None:
+    try:
+        return json.loads(details_path(lrc_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def _ts(t: float, br="[]") -> str:

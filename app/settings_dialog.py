@@ -221,6 +221,8 @@ class SettingsDialog(QDialog):
     ai_status_wanted = Signal()
     history_clear_requested = Signal()
     meanings_requested = Signal()
+    ai_window_requested = Signal()
+    fullscreen_requested = Signal()
     synced_wanted = Signal()
     synced_remove_requested = Signal(str, str)      # kind ("mine" / "ai"), file path
     synced_remove_all_requested = Signal(object)    # list of (kind, path)
@@ -286,12 +288,13 @@ class SettingsDialog(QDialog):
             ("Lyrics & translation", "Timing, your own lyrics and translations", self._lyrics_tab()),
             ("Behaviour", "Click-through, notifications and updates", self._behaviour_tab()),
             ("Shortcuts", "Keys that work even in games", self._shortcuts_tab()),
+            ("AI sync", "What the AI is doing, what it needs, and which lines it heard", self._ai_tab()),
             ("Song meanings", "What the lyrics mean – from Genius, with an optional AI backup",
              self._meanings_tab()),
             ("Synced songs", "Songs you or AI sync have timed – remove any you don't like", self._synced_tab()),
             ("Notifications", "Past pop-ups: songs synced, model downloads and saved timing", self._history_tab()),
         ]
-        icons = ["◐", "▦", "♫", "⚙", "⌨", "💬", "⏱", "🔔"]
+        icons = ["◐", "▦", "♫", "⚙", "⌨", "✦", "💬", "⏱", "🔔"]
         self._pages = pages
         for (name, sub, widget), icon in zip(pages, icons):
             self.nav.addItem(QListWidgetItem(f"{icon}   {name}"))
@@ -477,6 +480,16 @@ class SettingsDialog(QDialog):
 
     def _layout_tab(self):
         w, f = self._page()
+        fs = QPushButton("Open full-screen lyrics")
+        fs.clicked.connect(self.fullscreen_requested)
+        fs_row = QHBoxLayout()
+        fs_row.addWidget(fs)
+        fs_row.addStretch(1)
+        fs_holder = QWidget()
+        fs_holder.setLayout(fs_row)
+        f.addRow(fs_holder)
+        f.addRow(_hint("Big lyrics over the blurred album art, filling the screen. Esc, F11 or a double-click "
+                       "closes it. Also in the tray menu."))
         self._w["lines_shown"] = lb = QComboBox()
         lb.addItems(LINE_CHOICES)
         lb.setCurrentIndex(self.s.lines_shown - 1)
@@ -790,6 +803,24 @@ class SettingsDialog(QDialog):
         self.capture_started.emit()       # register the restored shortcuts
         self.capture_finished.emit()
         self._fill_backups()
+
+    def _ai_tab(self):
+        w, f = self._page()
+        btn = QPushButton("Open the AI sync window")
+        btn.setObjectName("primary")
+        btn.clicked.connect(self.ai_window_requested)
+        row = QHBoxLayout()
+        row.addWidget(btn)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        f.addRow(holder)
+        f.addRow(_hint("A window all about AI sync: what it's doing right now (listening / working, with "
+                       "progress), what it still needs (model, Spotify, being able to hear Spotify), and for every "
+                       "song it synced, which lyric lines it heard and which it missed."))
+        f.addRow(_hint("The AI sync settings themselves (model, CPU use, what to listen to) are in "
+                       "<b>Lyrics & translation</b>."))
+        return w
 
     def _meanings_tab(self):
         w, f = self._page()

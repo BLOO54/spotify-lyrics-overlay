@@ -53,6 +53,7 @@ class MyLyrics:
             return False
         try:
             f.unlink()
+            f.with_suffix(".ai.json").unlink(missing_ok=True)       # AI sync details, if any
             return True
         except OSError:
             return False

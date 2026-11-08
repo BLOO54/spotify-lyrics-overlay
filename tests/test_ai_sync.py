@@ -215,3 +215,15 @@ def test_run_job_reports_progress(monkeypatch):
     job = AS.Job("k", "T", "A", ["Hold the line and let go", "x y z", "a b c"], None, rec)
     AS.run_job(job, None, 2, progress=seen.append)
     assert seen[0] == 0.0 and seen[-1] == 1.0 and seen == sorted(seen) and 0.4 < seen[2] < 0.6
+
+
+def test_heard_flags_and_details(tmp_path):
+    from app.ai_sync import load_details, save_details
+    orig = [t + 2.0 if t is not None else 18.0 for t in TRUE]
+    res = align(LINES, speak(LINES, TRUE, drop={3}), orig)
+    assert res.heard == [True, True, False, False, True]          # line 3 not heard, the empty line never is
+    lrc = tmp_path / "Demo - Neon.lrc"
+    lrc.write_text("x", encoding="utf-8")
+    save_details(lrc, LINES, res)
+    d = load_details(lrc)
+    assert d["lines"] == LINES and d["heard"] == res.heard and d["matched"] == 3 and d["total"] == 4
