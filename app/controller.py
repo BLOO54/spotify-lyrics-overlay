@@ -90,6 +90,7 @@ class Controller(QObject):
         super().__init__()
         self.app = app
         self.s = Settings.load()
+        self.s.auto_backup()          # a quiet daily copy, so settings can always be brought back
         self.clock = PlaybackClock()
         self.client = LrclibClient(app_data_dir() / "lyrics_cache")
         self.translator = TranslationService(app_data_dir() / "translation_cache")
@@ -440,6 +441,7 @@ class Controller(QObject):
             self.settings_dlg.meanings_requested.connect(self.open_meanings)
             self.settings_dlg.synced_wanted.connect(self._refresh_synced)
             self.settings_dlg.synced_remove_requested.connect(self.remove_synced)
+            self.settings_dlg.synced_remove_all_requested.connect(self.remove_synced_many)
             self.settings_dlg.show_history(self.history.newest_first())
             self._show_update_status()
         self.settings_dlg.show()
@@ -1055,6 +1057,29 @@ class Controller(QObject):
         from .my_lyrics import list_synced
         self.settings_dlg.set_synced_songs(list_synced(self.my_lyrics.folder, "mine")
                                            + list_synced(self.ai_lyrics.folder, "ai"))
+
+    def remove_synced_many(self, items):
+        removed = 0
+        for kind, path in items:
+            if self._delete_synced_file(kind, path):
+                removed += 1
+        self.notify(f"Removed the timing for {removed} song{'s' if removed != 1 else ''}. "
+                    "They use the normal timing now.", "info", 4000, keep=True)
+        if self.track and self.track.title:
+            self._fetch(self.track)
+        self._refresh_synced()
+
+    def _delete_synced_file(self, kind: str, path: str) -> bool:
+        p = Path(path)
+        folder = self.my_lyrics.folder if kind == "mine" else self.ai_lyrics.folder
+        try:
+            if p.resolve().parent != folder.resolve() or p.suffix.lower() != ".lrc":
+                raise ValueError("not a synced-song file")
+            p.unlink()
+            return True
+        except Exception as e:
+            log.warning("could not remove %s: %s", path, e)
+            return False
 
     def remove_synced(self, kind: str, path: str):
         p = Path(path)

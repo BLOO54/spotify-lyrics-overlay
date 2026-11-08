@@ -223,6 +223,7 @@ class SettingsDialog(QDialog):
     meanings_requested = Signal()
     synced_wanted = Signal()
     synced_remove_requested = Signal(str, str)      # kind ("mine" / "ai"), file path
+    synced_remove_all_requested = Signal(object)    # list of (kind, path)
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -308,8 +309,19 @@ class SettingsDialog(QDialog):
 
         btns = QHBoxLayout()
         btns.addStretch(1)
+        self.reset_note = QLabel("")
+        self.reset_note.setWordWrap(True)
+        self.reset_note.setStyleSheet("color:#fca5a5; font-size:12px;")
+        self.reset_note.setVisible(False)
+        content.addWidget(self.reset_note)
         reset = QPushButton("Reset to defaults")
-        reset.clicked.connect(self._reset)
+        self.reset_btn = reset
+        self._reset_state = "idle"          # idle -> armed (click again) -> undo (just reset)
+        self._reset_backup = None
+        self._reset_timer = QTimer(self)
+        self._reset_timer.setSingleShot(True)
+        self._reset_timer.timeout.connect(self._reset_idle)
+        reset.clicked.connect(self._reset_clicked)
         close = QPushButton("Done")
         close.setObjectName("primary")
         close.clicked.connect(self.close)
@@ -710,7 +722,67 @@ class SettingsDialog(QDialog):
         f.addRow(holder)
         f.addRow(_hint("Updating downloads the new version from your GitHub releases page, checks the file, "
                        "installs it quietly and restarts the overlay. Your settings are kept."))
+
+        sep = QLabel("<b>Settings backups</b>")
+        sep.setObjectName("section")
+        f.addRow(sep)
+        self.backup_box = QComboBox()
+        f.addRow("Backup", self.backup_box)
+        brow = QHBoxLayout()
+        make = QPushButton("Back up now")
+        make.clicked.connect(self._backup_now)
+        restore = QPushButton("Restore this backup")
+        restore.clicked.connect(self._restore_backup)
+        brow.addWidget(make)
+        brow.addWidget(restore)
+        brow.addStretch(1)
+        bholder = QWidget()
+        bholder.setLayout(brow)
+        f.addRow(bholder)
+        f.addRow(_hint("Your settings are backed up automatically once a day and every time you reset or restore "
+                       "(the newest 20 are kept). Restoring brings back everything in Settings – look, layout, "
+                       "shortcuts and so on. Synced songs, the AI model and your keys aren't touched."))
+        self._fill_backups()
         return w
+
+    def _fill_backups(self):
+        from .history import when_text
+        names = {"auto": "daily backup", "manual": "made by you", "before-reset": "before a reset",
+                 "before-restore": "before a restore"}
+        self.backup_box.clear()
+        for b in Settings.list_backups():
+            self.backup_box.addItem(f"{when_text(b['time'].isoformat())} – {names.get(b['reason'], b['reason'])}",
+                                    str(b["path"]))
+        if self.backup_box.count() == 0:
+            self.backup_box.addItem("No backups yet", "")
+
+    def _backup_now(self):
+        if self.s.backup("manual"):
+            self._fill_backups()
+            self.backup_box.setCurrentIndex(0)
+
+    def _restore_backup(self):
+        path = self.backup_box.currentData()
+        if not path:
+            return
+        ans = QMessageBox.question(
+            self, "Restore settings",
+            f"Restore your settings from “{self.backup_box.currentText()}”?\n\n"
+            "Your current settings are backed up first, so you can switch back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        self._apply_backup(path, before="before-restore")
+
+    def _apply_backup(self, path, before: str):
+        from pathlib import Path
+        self.s.backup(before)
+        self.s.restore_from(Path(path))
+        self.refresh()
+        self.changed.emit()
+        self.capture_started.emit()       # register the restored shortcuts
+        self.capture_finished.emit()
+        self._fill_backups()
 
     def _meanings_tab(self):
         w, f = self._page()
@@ -777,6 +849,10 @@ class SettingsDialog(QDialog):
         self.synced_search.textChanged.connect(lambda _: self._fill_synced())
         top.addWidget(self.synced_filter)
         top.addWidget(self.synced_search, 1)
+        self.synced_remove_all = QPushButton("Remove all")
+        self.synced_remove_all.setObjectName("danger")
+        self.synced_remove_all.clicked.connect(self._confirm_remove_all)
+        top.addWidget(self.synced_remove_all)
         holder = QWidget()
         holder.setLayout(top)
         f.addRow(holder)
@@ -793,6 +869,7 @@ class SettingsDialog(QDialog):
                        "timing. AI sync will learn it again the next time it plays to the end (if AI sync is on); "
                        "songs you synced yourself can be synced again from the tray menu."))
         self._synced_entries = []
+        self._synced_shown = []
         return w
 
     def set_synced_songs(self, entries: list):
@@ -805,12 +882,14 @@ class SettingsDialog(QDialog):
         q = self.synced_search.text().strip().lower()
         self.synced_list.clear()
         shown = 0
+        self._synced_shown = []
         for e in sorted(self._synced_entries, key=lambda e: e.get("modified", ""), reverse=True):
             if want != "all" and e["kind"] != want:
                 continue
             if q and q not in f"{e['title']} {e['artist']}".lower():
                 continue
             shown += 1
+            self._synced_shown.append(e)
             row = QWidget()
             row.setObjectName("syncRow")
             row.setStyleSheet("QWidget#syncRow { background: transparent; }")
@@ -847,6 +926,21 @@ class SettingsDialog(QDialog):
         mine = sum(1 for e in self._synced_entries if e["kind"] == "mine")
         ai = len(self._synced_entries) - mine
         self.synced_count.setText(f"{mine} synced by you · {ai} synced by AI")
+
+    def _confirm_remove_all(self):
+        items = list(self._synced_shown)
+        if not items:
+            return
+        which = {"all": "synced songs", "mine": "songs you synced", "ai": "songs AI synced"}[
+            self.synced_filter.currentData() or "all"]
+        filtered = " that match your filter" if self.synced_search.text().strip() else ""
+        ans = QMessageBox.question(
+            self, "Remove all synced songs",
+            f"Remove the timing for all {len(items)} {which}{filtered}?\n\n"
+            "They go back to the normal lyrics timing. This can't be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if ans == QMessageBox.StandardButton.Yes:
+            self.synced_remove_all_requested.emit([(e["kind"], e["path"]) for e in items])
 
     def _confirm_remove(self, e: dict):
         who = "your own timing" if e["kind"] == "mine" else "the AI timing"
@@ -1086,6 +1180,42 @@ class SettingsDialog(QDialog):
 
     def sync_from_settings(self):
         self.refresh()
+
+    def _reset_clicked(self):
+        if self._reset_state == "idle":
+            self._reset_state = "armed"
+            self.reset_btn.setText("Click again to reset")
+            self.reset_btn.setStyleSheet("background:#7f1d1d; border:1px solid #ef4444; color:#ffffff;")
+            self.reset_note.setText("⚠ This puts EVERY setting back to the default – design, colours, sizes, "
+                                    "position, shortcuts, translation and AI sync on/off. Your synced songs, the AI "
+                                    "model and your keys are kept, and a backup is saved first. Click the button "
+                                    "again within 6 seconds to reset.")
+            self.reset_note.setVisible(True)
+            self._reset_timer.start(6000)
+        elif self._reset_state == "armed":
+            self._reset_timer.stop()
+            self._reset_backup = self.s.backup("before-reset")
+            self._reset()
+            self._fill_backups()
+            self._reset_state = "undo"
+            self.reset_btn.setText("Undo reset")
+            self.reset_btn.setStyleSheet("background:#7c3aed; border-color:#a855f7; color:#ffffff;")
+            self.reset_note.setStyleSheet("color:#c4b5fd; font-size:12px;")
+            self.reset_note.setText("Settings reset to the defaults. Changed your mind? Press Undo reset "
+                                    "(or restore the “before a reset” backup in Behaviour → Settings backups).")
+            self._reset_timer.start(30000)
+        else:
+            self._reset_timer.stop()
+            if self._reset_backup:
+                self._apply_backup(self._reset_backup, before="before-restore")
+            self._reset_idle()
+
+    def _reset_idle(self):
+        self._reset_state = "idle"
+        self.reset_btn.setText("Reset to defaults")
+        self.reset_btn.setStyleSheet("")
+        self.reset_note.setStyleSheet("color:#fca5a5; font-size:12px;")
+        self.reset_note.setVisible(False)
 
     def _reset(self):
         fresh = Settings()

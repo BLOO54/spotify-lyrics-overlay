@@ -33,6 +33,8 @@ def app_data_dir() -> Path:
     return d
 
 
+BACKUPS_KEPT = 20
+
 @dataclass
 class Settings:
     # Text
@@ -121,9 +123,9 @@ class Settings:
         return app_data_dir() / "settings.json"
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls, path: Path | None = None) -> "Settings":
         s = cls()
-        p = cls.path()
+        p = path or cls.path()
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
@@ -203,6 +205,73 @@ class Settings:
             self.highlight_style = "wipe"
         if self.translate_target not in LANGUAGES:
             self.translate_target = "en"
+
+    # ------------------------------------------------------------------ backups
+    @staticmethod
+    def backup_dir() -> Path:
+        return app_data_dir() / "settings_backups"
+
+    def backup(self, reason: str = "manual") -> Path | None:
+        """Save a copy of the current settings (keeps the newest 20)."""
+        from datetime import datetime
+        try:
+            d = self.backup_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            p = d / f"settings-{stamp}-{reason}.json"
+            n = 1
+            while p.exists():
+                n += 1
+                p = d / f"settings-{stamp}-{reason}-{n}.json"
+            p.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+            for old in sorted(d.glob("settings-*.json"), key=lambda f: f.stat().st_mtime_ns)[:-BACKUPS_KEPT]:
+                old.unlink(missing_ok=True)
+            return p
+        except Exception:
+            log.exception("Could not back up settings")
+            return None
+
+    @classmethod
+    def list_backups(cls) -> list[dict]:
+        """Newest first: {"path", "time" (datetime), "reason"}."""
+        import re
+        from datetime import datetime
+        out = []
+        try:
+            files = sorted(cls.backup_dir().glob("settings-*.json"), key=lambda f: f.stat().st_mtime_ns,
+                           reverse=True)
+        except OSError:
+            return out
+        for f in files:
+            m = re.match(r"settings-(\d{8}-\d{6})-([a-z-]+?)(?:-\d+)?\.json$", f.name)
+            if not m:
+                continue
+            try:
+                when = datetime.strptime(m.group(1), "%Y%m%d-%H%M%S")
+            except ValueError:
+                continue
+            out.append({"path": f, "time": when, "reason": m.group(2)})
+        return out
+
+    def restore_from(self, path: Path) -> None:
+        """Replace these settings with a backup (keys and tokens you have now are kept if the backup lacks them)."""
+        old = Settings.load(path)
+        keep = {k: getattr(self, k) for k in ("translate_email", "deepl_key", "genius_token", "anthropic_key")}
+        for k, v in vars(old).items():
+            setattr(self, k, v)
+        for k, v in keep.items():
+            if not getattr(self, k):
+                setattr(self, k, v)
+        self.first_run = False
+        self.clamp()
+        self.save()
+
+    def auto_backup(self) -> None:
+        """Once a day, quietly keep a copy of your settings."""
+        from datetime import datetime, timedelta
+        autos = [b for b in self.list_backups() if b["reason"] == "auto"]
+        if not autos or datetime.now() - autos[0]["time"] > timedelta(hours=20):
+            self.backup("auto")
 
     def save(self) -> None:
         try:

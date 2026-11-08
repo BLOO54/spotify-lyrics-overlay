@@ -341,6 +341,13 @@ def main() -> int:
                 win.lyrics.setCurrentRow(2)
             QTimer.singleShot(1500, fill)
             QTimer.singleShot(3000, lambda: ctl.meanings_win and ctl.meanings_win.grab().save(file))
+        elif what == "reset":
+            def arm():
+                ctl.open_settings()
+                ctl.settings_dlg.nav.setCurrentRow(3)
+                ctl.settings_dlg._reset_clicked()
+            QTimer.singleShot(1500, arm)
+            QTimer.singleShot(2600, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
         elif what == "synced":
             def show_synced():
                 ctl.my_lyrics.save("birdbrain", "Jamie Paige", "[ti:birdbrain]\n[ar:Jamie Paige]\n[00:01.00]x\n")

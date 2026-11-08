@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.16.2.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.17.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.16.2.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.17.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -209,8 +209,13 @@ background have an explanation on Genius; **Follow the song** highlights the lin
 
 ### ⏱ Synced songs
 Settings → **Synced songs** lists every song you synced yourself or AI sync timed, newest first. Filter by who
-synced it or by name, and press **Remove** on any you don't like - the song goes back to the normal timing (AI
+synced it or by name, and press **Remove** on any you don't like (or **Remove all** for every song in the list) - the song goes back to the normal timing (AI
 sync learns it again next time it plays to the end).
+
+### 💾 Settings backups
+Your settings are backed up automatically once a day, and every time you reset or restore (the newest 20 are kept).
+Settings → **Behaviour** → **Settings backups** lets you **Back up now** or **Restore** any backup.
+**Reset to defaults** needs a second click, and right after a reset you can press **Undo reset**.
 
 ### 🔔 Notifications
 Settings → **Notifications** lists past pop-ups worth looking back at: songs AI sync finished (or couldn't

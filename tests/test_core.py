@@ -538,3 +538,25 @@ def test_sizes_carry_over_from_older_versions(tmp_path, monkeypatch):
     s.save()
     s2 = Settings.load()
     assert (s2.font_size, s2.side_font_size, s2.title_font_size) == (70, 24, 18) # only lyrics changed
+
+
+def test_settings_backup_and_restore(tmp_path, monkeypatch):
+    import app.config as C
+    monkeypatch.setattr(C, "app_data_dir", lambda: tmp_path)
+    s = C.Settings()
+    s.width, s.highlight_color, s.genius_token = 700, "#F97316", "tok"
+    s.save()
+    p = s.backup("before-reset")
+    assert p and p.exists()
+    s.width, s.highlight_color, s.genius_token = 1000, "#A855F7", "newtok"
+    s.save()
+    b = C.Settings.list_backups()
+    assert b[0]["reason"] == "before-reset" and b[0]["path"] == p
+    s.restore_from(p)
+    assert s.width == 700 and s.highlight_color == "#F97316"
+    assert C.Settings.load().width == 700
+    for _ in range(25):
+        s.backup("manual")
+    assert len(C.Settings.list_backups()) == C.BACKUPS_KEPT
+    s.auto_backup(); s.auto_backup()
+    assert sum(1 for x in C.Settings.list_backups() if x["reason"] == "auto") == 1
