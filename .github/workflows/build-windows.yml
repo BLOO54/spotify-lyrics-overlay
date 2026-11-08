@@ -344,6 +344,7 @@ jobs:
             ci-x-check.txt
             ci-ai-compare.txt
             ci-frame-test.json
+            ci-frame-test-spotify.png
             ci-ai-hard-*.json
             ci-ai-max.txt
             ci-ai-max-*.json
