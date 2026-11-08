@@ -311,6 +311,40 @@ def main() -> int:
                 ctl.settings_dlg.nav.setCurrentRow(5)
             QTimer.singleShot(1500, fill)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
+        elif what == "meanings":
+            def fill():
+                from app.meanings import Explanation, SongHit, SongMeanings
+                ctl.s.meanings_ai = True
+                ctl.open_meanings()
+                win = ctl.meanings_win
+                win.resize(1060, 640)
+                lines = ["Lights are racing through the night", "Every pixel burning bright",
+                         "Hold the line and don't let go", "We're the final boss of the show", "",
+                         "Neon rivers in the sky", "Never stop and never die"]
+                m = SongMeanings(SongHit(1, "Neon Horizon (Demo)", "Spotify Lyrics Overlay", "https://genius.com"),
+                                 "A demo song about late-night gaming sessions.",
+                                 [Explanation("Hold the line and don't let go",
+                                              "The singer is talking about a tough boss fight: keep your nerve and "
+                                              "don't give up, even when it feels hopeless. It doubles as advice "
+                                              "for real life.", 24, True),
+                                  Explanation("Every pixel burning bright", "The screen at full brightness at "
+                                              "3 AM - the whole world shrinks to the game.", 5, False, False)])
+                win._req += 1
+                win.song = {"title": m.hit.title, "artist": m.hit.artist, "lines": lines,
+                            "starts": None, "now": False}
+                win.title_lbl.setText(m.hit.title)
+                win.artist_lbl.setText(m.hit.artist)
+                win._on_done(win._req, "song", {"lines": lines, "starts": None, "meanings": m, "genius_error": None})
+                win.lyrics.setCurrentRow(2)
+            QTimer.singleShot(1500, fill)
+            QTimer.singleShot(3000, lambda: ctl.meanings_win and ctl.meanings_win.grab().save(file))
+        elif what == "meanings-search":
+            def search():
+                ctl.open_meanings()
+                ctl.meanings_win.search.setText("birdbrain jamie paige")
+                ctl.meanings_win.do_search()
+            QTimer.singleShot(1500, search)
+            QTimer.singleShot(7000, lambda: ctl.meanings_win and ctl.meanings_win.grab().save(file))
         elif what == "toast":
             def pop():
                 ctl.s.popup_style = "app"

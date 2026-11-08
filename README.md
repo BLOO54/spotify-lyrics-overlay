@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.14.5.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.15.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.5.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.15.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -196,6 +196,15 @@ have unsynced lyrics online.
   plays, and Settings says so). It uses the speech-recognition model Whisper (by OpenAI) through `faster-whisper`, running entirely
   on your PC; the model is downloaded once from Hugging Face.
 
+### 💬 Song meanings
+Like Genius, inside the app: Settings → **Song meanings** → **Open song meanings** (or tray → *Song meanings…*).
+Press **Now playing** or search any song, then click a lyric line to read what it means. Lines with a purple
+background have an explanation on Genius; **Follow the song** highlights the line being sung.
+- Needs a free **Genius access token** (once): sign in at genius.com/api-clients → *New API Client* →
+  *Generate Access Token* → paste it in Settings → Song meanings. Without one you can still search and read lyrics.
+- **AI backup** (optional, off by default): lines Genius hasn't explained are explained by Claude using your own
+  Anthropic API key (a fraction of a cent per line, only when you click one; answers are remembered).
+
 ### 🔔 Notifications
 Settings → **Notifications** lists past pop-ups worth looking back at: songs AI sync finished (or couldn't
 time), model downloads and timing you saved yourself. **Clear** empties the list.
@@ -253,6 +262,8 @@ Your settings stay in `%APPDATA%\SpotifyLyricsOverlay`; delete that folder to re
 - Lyrics are cached on your PC so each song is only downloaded once.
 - **AI sync** (off unless you turn it on) listens to your PC's sound while a song plays and keeps it in memory
   only; it is processed on your PC and never saved or sent anywhere. The model download comes from Hugging Face.
+- **Song meanings** (only when you open it) asks Genius for the song's explanations using your access token, and
+  - only if you turn on the AI backup - sends a few lyric lines around the one you clicked to Anthropic.
 - Nothing is injected into games or Spotify; the overlay is a normal (transparent) window.
 
 ---

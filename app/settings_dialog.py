@@ -212,6 +212,7 @@ class SettingsDialog(QDialog):
     ai_cancel_requested = Signal()
     ai_status_wanted = Signal()
     history_clear_requested = Signal()
+    meanings_requested = Signal()
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -275,9 +276,11 @@ class SettingsDialog(QDialog):
             ("Lyrics & translation", "Timing, your own lyrics and translations", self._lyrics_tab()),
             ("Behaviour", "Click-through, notifications and updates", self._behaviour_tab()),
             ("Shortcuts", "Keys that work even in games", self._shortcuts_tab()),
+            ("Song meanings", "What the lyrics mean – from Genius, with an optional AI backup",
+             self._meanings_tab()),
             ("Notifications", "Past pop-ups: songs synced, model downloads and saved timing", self._history_tab()),
         ]
-        icons = ["◐", "▦", "♫", "⚙", "⌨", "🔔"]
+        icons = ["◐", "▦", "♫", "⚙", "⌨", "💬", "🔔"]
         self._pages = pages
         for (name, sub, widget), icon in zip(pages, icons):
             self.nav.addItem(QListWidgetItem(f"{icon}   {name}"))
@@ -698,6 +701,51 @@ class SettingsDialog(QDialog):
                        "installs it quietly and restarts the overlay. Your settings are kept."))
         return w
 
+    def _meanings_tab(self):
+        w, f = self._page()
+        open_btn = QPushButton("Open song meanings")
+        open_btn.setObjectName("primary")
+        open_btn.clicked.connect(self.meanings_requested)
+        row = QHBoxLayout()
+        row.addWidget(open_btn)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        f.addRow(holder)
+        f.addRow(_hint("Opens a window where you can search any song (or use the one playing), click a lyric "
+                       "line and read what it means. It only appears when you open it."))
+
+        sep = QLabel("<b>Genius</b>")
+        sep.setObjectName("section")
+        f.addRow(sep)
+        self._w["genius_token"] = gt = QLineEdit(self.s.genius_token)
+        gt.setEchoMode(QLineEdit.EchoMode.Password)
+        gt.setPlaceholderText("paste your Genius access token")
+        gt.editingFinished.connect(lambda: self._set("genius_token", gt.text().strip()))
+        f.addRow("Genius access token", gt)
+        f.addRow(_hint("Free, takes about a minute: sign in at "
+                       "<a style='color:#c9b8ff' href='https://genius.com/api-clients'>genius.com/api-clients</a>"
+                       " → <b>New API Client</b> (any name, and any website such as https://example.com) → "
+                       "<b>Save</b> → <b>Generate Access Token</b> → copy it here. It only lets the app read "
+                       "public Genius explanations."))
+
+        sep = QLabel("<b>AI backup (optional)</b>")
+        sep.setObjectName("section")
+        f.addRow(sep)
+        self._w["meanings_ai"] = self._check("Explain lines Genius hasn't explained with AI", "meanings_ai")
+        f.addRow(self._w["meanings_ai"])
+        self._w["anthropic_key"] = ak = QLineEdit(self.s.anthropic_key)
+        ak.setEchoMode(QLineEdit.EchoMode.Password)
+        ak.setPlaceholderText("paste your Anthropic API key (starts with sk-ant-)")
+        ak.editingFinished.connect(lambda: self._set("anthropic_key", ak.text().strip()))
+        f.addRow("Anthropic API key", ak)
+        f.addRow(_hint("Uses Claude through your own Anthropic account – get a key at "
+                       "<a style='color:#c9b8ff' href='https://console.anthropic.com'>console.anthropic.com</a> "
+                       "(it needs a little prepaid credit). Each explanation costs a fraction of a cent, only runs "
+                       "when you click a line Genius hasn't explained, and is remembered so the same line is never "
+                       "paid for twice. Answers are in the language picked under Translation."))
+        return w
+
     def _history_tab(self):
         w, f = self._page()
         self.history_list = QListWidget()
@@ -933,6 +981,7 @@ class SettingsDialog(QDialog):
         fresh.first_run = False
         # keep the user's translation account details
         fresh.translate_email, fresh.deepl_key = self.s.translate_email, self.s.deepl_key
+        fresh.genius_token, fresh.anthropic_key = self.s.genius_token, self.s.anthropic_key
         for k, v in vars(fresh).items():
             setattr(self.s, k, v)
         self.s.save()

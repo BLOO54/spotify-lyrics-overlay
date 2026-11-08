@@ -118,6 +118,7 @@ class Controller(QObject):
             "app listen to that song again. Your own files in \"my_lyrics\" always come first.\n"))
         self.song_sync_ai = SongSync(app_data_dir() / "song_sync_ai.json")
         self.history = NotificationLog(app_data_dir() / "notifications.json")
+        self.meanings_win = None
         self.ai_store = ai_sync.ModelStore()
         self.ai_listener = None
         self.ai_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai")
@@ -211,6 +212,9 @@ class Controller(QObject):
         act_tap.triggered.connect(self.open_tap_sync)
         self.act_ai_redo = QAction("AI sync: listen to this song again", self.menu)
         self.act_ai_redo.triggered.connect(self.ai_redo_song)
+        act_meanings = QAction("Song meanings…", self.menu)
+        act_meanings.triggered.connect(self.open_meanings)
+        self.act_meanings = act_meanings
         act_folder = QAction("Open my lyrics folder", self.menu)
         act_folder.triggered.connect(self.open_lyrics_folder)
         act_refetch = QAction("Reload lyrics", self.menu)
@@ -229,7 +233,7 @@ class Controller(QObject):
                             "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
                             "hk_version": (act_version, "Try another lyrics version")}
         self._label_menu()
-        for a in (self.act_show, self.act_click, self.act_ai, act_settings):
+        for a in (self.act_show, self.act_click, self.act_ai, act_settings, act_meanings):
             self.menu.addAction(a)
         self.menu.addSeparator()
         for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
@@ -433,6 +437,7 @@ class Controller(QObject):
             self.settings_dlg.ai_cancel_requested.connect(self.ai_cancel_download)
             self.settings_dlg.ai_status_wanted.connect(self._refresh_ai_status)
             self.settings_dlg.history_clear_requested.connect(self._clear_history)
+            self.settings_dlg.meanings_requested.connect(self.open_meanings)
             self.settings_dlg.show_history(self.history.newest_first())
             self._show_update_status()
         self.settings_dlg.show()
@@ -658,6 +663,9 @@ class Controller(QObject):
             self.unregister_hotkeys()
             if self.ai_listener is not None:
                 self.ai_listener.stop()
+            if self.meanings_win is not None:
+                self.meanings_win.close()
+                self.meanings_win.pool.shutdown(wait=False, cancel_futures=True)
             if self._ai_download:
                 self._ai_download[1].set()
             self.ai_pool.shutdown(wait=False, cancel_futures=True)
@@ -1009,6 +1017,30 @@ class Controller(QObject):
         self.notify(f"{ai_sync.MODELS[name][1]} AI model uninstalled ({ai_sync.MODELS[name][2]} freed). "
                     "Songs it already synced keep their timing while AI sync is on.", "info", 6000, keep=True)
         self._refresh_ai_status()
+
+    # ------------------------------------------------------------ song meanings
+    def open_meanings(self):
+        if self.meanings_win is None:
+            from .meanings_window import MeaningsWindow
+            self.meanings_win = MeaningsWindow(self)
+        self.meanings_win.show()
+        self.meanings_win.raise_()
+        self.meanings_win.activateWindow()
+        if self.meanings_win.song is None and self.track and self.track.title:
+            self.meanings_win.show_now_playing()
+
+    def meanings_now_playing(self):
+        """The song playing now, with its lyric lines (and timing, if any) for the meanings window."""
+        if not (self.track and self.track.title):
+            return None
+        ly = self.overlay.lyrics
+        if ly is not None and ly.lines:
+            lines, starts = [ln.text for ln in ly.lines], [ln.start for ln in ly.lines]
+        elif self._last_result is not None and self._last_result.plain:
+            lines, starts = lines_for_tapping(None, self._last_result.plain), None
+        else:
+            lines, starts = None, None
+        return {"title": self.track.title, "artist": self.track.artist, "lines": lines, "starts": starts}
 
     def _clear_history(self):
         self.history.clear()
