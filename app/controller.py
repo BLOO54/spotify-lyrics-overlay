@@ -123,7 +123,7 @@ class Controller(QObject):
         self._ai_jobs = 0
         self._ai_download = None        # (model name, cancel event) while downloading
         self._ai_dl_text = ""
-        self._ai_prev = (self.s.ai_sync_enabled, self.s.ai_model)
+        self._ai_prev = (self.s.ai_sync_enabled, self.s.ai_model, self.s.use_my_files)
         self.tap_dlg = None
         self._song_offset_ms = 0
         self._version_busy = False
@@ -491,6 +491,12 @@ class Controller(QObject):
     def _tap_saved(self, title: str, artist: str, text: str):
         path = self.my_lyrics.save(title, artist, text)
         log.info("Saved your timing to %s", path)
+        if not self.s.use_my_files:           # you just synced it, so you want to see it
+            self.s.use_my_files = True
+            self.s.save()
+            self._ai_prev = (self.s.ai_sync_enabled, self.s.ai_model, True)
+            if self.settings_dlg is not None:
+                self.settings_dlg.sync_from_settings()
         # your taps are the real timing, so any earlier/later adjustment for this song is no longer needed
         self.song_sync.set(title, artist, 0)
         if self.track and self.track.title == title:
@@ -611,7 +617,7 @@ class Controller(QObject):
         self._apply_visibility()
         if self.settings_dlg and self.s.fixed_height != before:
             self.settings_dlg.refresh()          # show the height that was just frozen
-        ai_now = (self.s.ai_sync_enabled, self.s.ai_model)
+        ai_now = (self.s.ai_sync_enabled, self.s.ai_model, self.s.use_my_files)
         if ai_now != self._ai_prev:
             self._ai_prev = ai_now
             if self.track and self.track.title and self.track.artist:
@@ -702,11 +708,12 @@ class Controller(QObject):
         token = self.fetch_token
         title, artist, album, dur = st.title, st.artist, st.album, st.duration
         ai_on = self.s.ai_sync_enabled
+        use_mine = self.s.use_my_files
 
         def work():
             try:
                 from .lyrics_provider import LyricsResult
-                mine = self.my_lyrics.read(title, artist)       # your own file always wins
+                mine = self.my_lyrics.read(title, artist) if use_mine else None   # your own file wins
                 if mine:
                     return LyricsResult(mine, None, False, "my file")
                 if ai_on:

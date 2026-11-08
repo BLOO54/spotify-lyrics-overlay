@@ -539,6 +539,10 @@ class SettingsDialog(QDialog):
         holder = QWidget()
         holder.setLayout(row)
         f.addRow(holder)
+        self._w["use_my_files"] = self._check("Use my own synced files", "use_my_files")
+        f.addRow(self._w["use_my_files"])
+        f.addRow(_hint("Off = songs you synced yourself use the normal (or AI) timing instead. Your files are "
+                       "kept – turn this back on any time."))
 
         sep = QLabel("<b>AI sync (optional)</b>")
         sep.setObjectName("section")

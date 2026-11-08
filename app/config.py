@@ -96,6 +96,7 @@ class Settings:
     show_romaji: bool = False            # Japanese pronunciation in English letters
     first_run: bool = True
     auto_update_check: bool = True
+    use_my_files: bool = True             # use the songs you synced yourself (files in "my_lyrics")
     ai_sync_enabled: bool = False         # AI sync: listen to each song once and time the lyrics
     ai_model: str = "light"               # "light" (~0.5 GB) | "best" (~1.5 GB)
     ai_threads: int = 2                   # CPU cores the AI may use while it works

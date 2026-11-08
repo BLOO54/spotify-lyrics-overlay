@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.14.1.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.14.2.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.1.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.14.2.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -170,7 +170,8 @@ If a song's lyrics are out of time and no other version fits:
 3. Your changes show live in the overlay. Press **Save** to keep them (Cancel = no change).
 
 You can also put your own `.lrc` files in the lyrics folder (tray → **Open my lyrics folder**), named
-`Artist - Title.lrc`, e.g. `Jamie Paige - birdbrain.lrc`. Your files always win over the lyrics website.
+`Artist - Title.lrc`, e.g. `Jamie Paige - birdbrain.lrc`. Your files always win over the lyrics website - unless you turn off **Use my own synced files**
+(Lyrics & translation), which keeps the files but ignores them.
 
 ### 🤖 AI sync (optional)
 Lets the app *hear* when each line is sung, so the lyrics follow the singer closely - even for songs that only
@@ -184,7 +185,8 @@ have unsynced lyrics online.
 
 - The sound is held in memory only - never saved to disk or uploaded. Each song's timing is a tiny `.lrc` file
   in `%APPDATA%\SpotifyLyricsOverlay\ai_lyrics`.
-- Your own synced files (the tap-along tool) always come first; the earlier / later shortcuts still work.
+- Your own synced files (the tap-along tool) come first; turn off **Use my own synced files** to let AI sync time
+  those songs too (your files are kept). The earlier / later shortcuts still work.
 - Tray → **AI sync: listen to this song again** redoes a song. **Remove model** gives the disk space back.
 - **Listen to: Only Spotify** (the default) hears Spotify by itself, so game sound and voice chat don't get in the
   way (needs Windows 10 version 2004 or newer, or Windows 11 - otherwise it falls back to everything the PC
