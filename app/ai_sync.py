@@ -149,7 +149,7 @@ class AlignResult:
 
 
 def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
-          max_shift: float = 25.0) -> AlignResult:
+          max_shift: float = 150.0) -> AlignResult:
     """Match the heard words to the lyric lines and work out when each line starts."""
     n = len(lines)
     # lyric tokens, remembering which line / which word of the line each one came from
@@ -192,14 +192,37 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
         if k0 > 2:
             continue           # the start of the line wasn't heard
         s = max(0.0, t0 - 0.22 * k0)
-        if orig_starts is not None and i < len(orig_starts) and orig_starts[i] is not None \
-                and abs(s - orig_starts[i]) > max_shift:
-            continue           # matched the same words somewhere else in the song (a repeated chorus)
         starts[i] = s
         ends[i] = hit[-1][1][1] if hit[-1][0] >= len(toks) - 2 else None
         matched += 1
         if not has_cjk(lines[i]) and len(hit) >= 0.6 * len(toks):
             words_t[i] = {owner[toks[k]][1]: tt for k, tt in hit}
+
+    # A heard line whose shift from the website's timing doesn't fit the lines around it was matched
+    # to the wrong place (e.g. a repeated chorus). Comparing with the NEIGHBOURS (not a fixed limit)
+    # still works when the website's timing drifts further off as the song goes on.
+    if orig_starts is not None:
+        offs = {i: starts[i] - orig_starts[i] for i in range(n)
+                if starts[i] is not None and i < len(orig_starts) and orig_starts[i] is not None}
+        bad = []
+        everyone = sorted(offs.values())
+        for i, o in offs.items():
+            near = sorted(offs[j] for j in offs if j != i and abs(j - i) <= 6)
+            if abs(o) > max_shift:
+                bad.append(i)
+            elif len(near) >= 2:                       # enough lines around it to compare with
+                if abs(o - near[len(near) // 2]) > 6.0:
+                    bad.append(i)
+            elif len(everyone) >= 4:                   # few neighbours: compare with the whole song
+                if abs(o - everyone[len(everyone) // 2]) > 12.0:
+                    bad.append(i)
+            elif abs(o) > 25.0:                        # hardly anything heard: be strict
+                bad.append(i)
+        for i in bad:
+            starts[i] = None
+            words_t[i] = None
+            ends[i] = None
+            matched -= 1
 
     # keep lines in order: drop any AI start that isn't after the previous one
     last = -1.0

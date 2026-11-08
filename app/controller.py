@@ -897,7 +897,8 @@ class Controller(QObject):
         rec = self.ai_listener.peek()
         if rec is None or not rec.duration:
             return
-        if rec.covered() >= 0.95 * rec.duration or self.clock.position() >= rec.duration - 1.5:
+        # wait for the very end of the song - the last lines are often sung right up to it
+        if self.clock.position() >= rec.duration - 2.0:
             self._ai_finish()
 
     def _ai_finish(self):
@@ -945,8 +946,8 @@ class Controller(QObject):
             return
         rec = self.ai_listener.peek() if (self.ai_listener is not None and self._ai_ctx is not None) else None
         if rec is not None and rec.key == self.track_key:
-            need = 0.95 * rec.duration if rec.duration else 0.0
-            self.overlay.set_ai_note("AI listening", min(1.0, rec.covered() / need) if need else None)
+            need = rec.duration - 2.0 if rec.duration else 0.0
+            self.overlay.set_ai_note("AI listening", min(1.0, rec.covered() / need) if need > 0 else None)
         else:
             self.overlay.set_ai_note("")
 
@@ -1210,11 +1211,11 @@ class Controller(QObject):
             now["state"] = "No lyrics to sync"
         elif self._ai_ctx is not None and lis is not None and lis.peek() is not None:
             rec = lis.peek()
-            need = 0.95 * rec.duration if rec.duration else 0
+            need = rec.duration - 2.0 if rec.duration else 0
             now["state"] = "Listening"
             now["detail"] = (f"Heard {rec.covered():.0f} s of {rec.duration:.0f} s"
-                             f" ({lis.method or 'starting…'}). It starts working once the song is nearly over.")
-            now["progress"] = min(1.0, rec.covered() / need) if need else None
+                             f" ({lis.method or 'starting…'}). It starts working when the song ends.")
+            now["progress"] = min(1.0, rec.covered() / need) if need > 0 else None
         elif self.track_key in self._ai_skipped:
             now["state"] = "Will try again next time"
             now["detail"] = self._ai_skipped[self.track_key]

@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.18.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.18.1.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.18.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.18.1.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?

@@ -227,3 +227,30 @@ def test_heard_flags_and_details(tmp_path):
     save_details(lrc, LINES, res)
     d = load_details(lrc)
     assert d["lines"] == LINES and d["heard"] == res.heard and d["matched"] == 3 and d["total"] == 4
+
+
+def test_drifting_website_timing_still_matched():
+    """Like BIRDBRAIN: the website's timing is for a longer version, so it drifts further off as the
+    song goes on (40 s by the end). Every heard line must still be used."""
+    lines = [f"line number {k} sings words {k} here" for k in range(40)]
+    truth = [5.0 + 5.5 * k for k in range(40)]
+    orig = [t * 1.2 for t in truth]                        # 0 s off at the start, ~43 s off at the end
+    heard = []
+    for t, ln in zip(truth, lines):
+        for j, w in enumerate(ln.split()):
+            heard.append(Heard(w, t + 0.3 * j, t + 0.3 * j + 0.25))
+    res = align(lines, heard, orig)
+    assert res.matched_lines == 40, res.matched_lines
+    assert max(abs(a - b) for a, b in zip(res.starts, truth)) < 0.05
+
+
+def test_chorus_matched_to_wrong_repeat_is_still_rejected():
+    lines = ["intro words start here", "chorus line goes like this", "verse words in the middle",
+             "more verse words here now", "chorus line goes like this", "outro words end here"]
+    truth = [2.0, 10.0, 20.0, 30.0, 40.0, 50.0]
+    heard = []
+    for i in (0, 1, 2, 3, 5):            # the second chorus wasn't heard, the first was heard twice
+        for j, w in enumerate(lines[i].split()):
+            heard.append(Heard(w, truth[i] + 0.3 * j, truth[i] + 0.3 * j + 0.2))
+    res = align(lines, heard, list(truth))
+    assert abs(res.starts[1] - 10.0) < 0.05 and abs(res.starts[4] - 40.0) < 1.0
