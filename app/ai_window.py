@@ -155,7 +155,18 @@ class AiSyncWindow(QWidget):
                                     "matching. Useful after an update.")
         self.rematch_btn.setVisible(False)
         self.rematch_btn.clicked.connect(self._rematch)
-        ll.addWidget(self.rematch_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        self.missed_btn = QPushButton("Listen to missed parts only")
+        self.missed_btn.setObjectName("primary")
+        self.missed_btn.setToolTip("Spotify jumps to each part the AI missed (a couple of seconds before it), "
+                                   "the AI listens to just those bits, then Spotify pauses and the timing is "
+                                   "updated. No need to play the whole song again.")
+        self.missed_btn.setVisible(False)
+        self.missed_btn.clicked.connect(self._listen_missed)
+        btns = QHBoxLayout()
+        btns.addWidget(self.missed_btn)
+        btns.addWidget(self.rematch_btn)
+        btns.addStretch(1)
+        ll.addLayout(btns)
         bottom.addWidget(songs_card, 2)
         bottom.addWidget(lines_card, 3)
         root.addLayout(bottom, 1)
@@ -278,13 +289,17 @@ class AiSyncWindow(QWidget):
         one = snap.get("one_song")
         if one:
             states = {"waiting": "Waiting for it to play", "syncing": "Syncing", "processing": "Working out the timing"}
+            if one.get("mode") == "missed":
+                states["syncing"] = "Listening to the missed parts"
             self.one_status.setText(f"<b>{html.escape(one['title'])}</b> – {states.get(one['state'], '')}. "
                                     f"{html.escape(one.get('note') or '')}")
             self.one_cancel.setVisible(True)
             self.one_go.setEnabled(False)
+            self.missed_btn.setEnabled(False)
         else:
             self.one_cancel.setVisible(False)
             self.one_go.setEnabled(self.one_pick.count() > 0)
+            self.missed_btn.setEnabled(True)
         self._fill_songs(snap)
 
     def _fill_songs(self, snap):
@@ -327,6 +342,12 @@ class AiSyncWindow(QWidget):
                     self.songs.setCurrentRow(k)
                     self._song_picked(k)
 
+    def _listen_missed(self):
+        e = getattr(self, "_picked", None)
+        if e and e.get("path"):
+            self.ctl.start_missed_parts(e["path"], e["title"], e.get("artist") or "")
+            self.refresh()
+
     def _song_picked(self, row: int):
         entries = getattr(self, "_entries", [])
         if not (0 <= row < len(entries)):
@@ -334,7 +355,10 @@ class AiSyncWindow(QWidget):
         e = entries[row]
         d = e.get("details")
         self._picked = e
-        self.rematch_btn.setVisible(bool(not e.get("failed") and d and d.get("words") and e.get("path")))
+        has_words = bool(not e.get("failed") and d and d.get("words") and e.get("path"))
+        self.rematch_btn.setVisible(has_words)
+        self.missed_btn.setVisible(has_words and not all(
+            h for t, h in zip(d["lines"], d["heard"]) if t.strip()) if has_words and d.get("heard") else False)
         head = (f"<p style='font-size:16px; font-weight:600; color:#ffffff'>{html.escape(e['title'])}</p>"
                 f"<p style='color:#9a9ab0'>{html.escape(e.get('note') or '')}</p>")
         if not d or not d.get("lines"):

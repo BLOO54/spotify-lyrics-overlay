@@ -464,3 +464,64 @@ def test_voice_track_never_makes_it_worse(monkeypatch):
     AS, job = _voice_job(monkeypatch, None)            # the voice copy only gives nonsense
     text, res, note = AS.run_job(job, None, 2)
     assert res.matched_lines == 4 and "found" not in note, note
+
+
+def _saved_details_missing_chorus():
+    """Saved AI details for a song where the first listen missed lines 2-3 and 6."""
+    lines = ["one two three four five", "six seven eight nine ten", "the chorus goes like this tonight",
+             "and then it goes like that", "eleven twelve thirteen fourteen", "fifteen sixteen seventeen",
+             "a lonely line near the end", "the last words of the song"]
+    truth = [2.0, 8.0, 14.0, 20.0, 26.0, 32.0, 60.0, 66.0]
+    heard = [(w, truth[i] + 0.4 * j, truth[i] + 0.4 * j + 0.3)
+             for i in (0, 1, 4, 5, 7) for j, w in enumerate(lines[i].split())]
+    return {"lines": lines, "words": heard, "orig": [t + 0.5 for t in truth]}, lines, truth
+
+
+def test_plan_missed_parts():
+    from app.ai_sync import plan_missed_parts
+    details, lines, truth = _saved_details_missing_chorus()
+    res, plan = plan_missed_parts(details)
+    assert res.matched_lines == 5
+    assert len(plan) == 2                                     # the chorus, and the lonely line
+    (a1, b1), (a2, b2) = plan
+    assert a1 <= 14.0 - 1.5 and b1 >= 20.0 + 1.0 and b1 <= 28.5
+    assert a2 <= 60.0 - 1.5 and b2 >= 61.0 and b2 <= 68.5
+    assert plan_missed_parts({"lines": lines, "words": [(w, truth[i] + 0.4 * j, truth[i] + 0.4 * j + 0.3)
+                                                         for i in range(8) for j, w in enumerate(lines[i].split())],
+                              "orig": truth})[1] == []
+
+
+def test_patch_job_hears_only_the_missed_parts(monkeypatch):
+    import numpy as np
+
+    import app.ai_sync as AS
+    details, lines, truth = _saved_details_missing_chorus()
+    _, plan = AS.plan_missed_parts(details)
+    rec = AS.Recording("k", 80)
+    for a, b in plan:                                         # what playing just those parts records
+        t = a
+        while t < b:
+            rec.add(np.full(8000, 0.1, dtype=np.float32), t + 0.5)
+            t += 0.5
+        rec.gap()
+    assert len(rec.segments) == 2 and rec.covered() < 0.5 * 70     # under half the song
+    clip0 = [0.0]
+    real_clip = AS._clip
+
+    def spy(pieces, t0, t1):
+        got = real_clip(pieces, t0, t1)
+        if got:
+            clip0[0] = got[0]
+        return got
+
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None):
+        want = [i for i in (2, 3, 6) if lines[i] in (prompt or "")]
+        return [AS.Heard(w, truth[i] - clip0[0] + 0.4 * j, truth[i] - clip0[0] + 0.4 * j + 0.3)
+                for i in want for j, w in enumerate(lines[i].split())]
+    monkeypatch.setattr(AS, "_clip", spy)
+    monkeypatch.setattr(AS, "transcribe", fake_transcribe)
+    monkeypatch.setattr(AS, "load_whisper", lambda *a, **k: "model")
+    text, res, msg = AS.patch_job(details, rec, None, "Song", "Artist")
+    assert res.matched_lines == 8 and msg == "found 3 more lines", (res.matched_lines, msg)
+    assert abs(res.starts[2] - 14.0) < 0.1 and abs(res.starts[6] - 60.0) < 0.1
+    assert "[#:AI heard 8/8 lines]" in text

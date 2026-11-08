@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time as _time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -65,6 +66,7 @@ class _Bridge(QObject):
     ai_done = Signal(object, object)          # job, (lrc, result, message) or an error
     ai_progress = Signal(object, object)      # done bytes, total bytes
     ai_job_progress = Signal(object, object)  # song key, fraction 0..1 while the AI works on it
+    ai_patch_done = Signal(object, object)    # missed-parts session, (lrc, result, message) or an error
     ai_downloaded = Signal(object, object)    # model name, error or None
 
 
@@ -109,6 +111,7 @@ class Controller(QObject):
         self.bridge.ai_done.connect(self._on_ai_done)
         self.bridge.ai_progress.connect(self._on_ai_progress)
         self.bridge.ai_job_progress.connect(self._on_ai_job_progress)
+        self.bridge.ai_patch_done.connect(self._on_ai_patch_done)
         self.bridge.ai_downloaded.connect(self._on_ai_downloaded)
         self.update_info = None
         self._update_busy = False
@@ -881,6 +884,9 @@ class Controller(QObject):
 
     def _ai_arm(self, result):
         """Lyrics are on screen: start listening, if AI sync should time this song."""
+        one = self._one_song
+        if one and one.get("mode") == "missed" and one["state"] in ("syncing", "processing"):
+            return                              # listening to just the missed parts - leave it alone
         self._ai_ctx = None
         self._update_ai_indicator()
         if self.ai_listener is not None:
@@ -963,6 +969,13 @@ class Controller(QObject):
 
     def _update_ai_indicator(self):
         """The 'AI listening 42%' / 'AI syncing 63%' note (and bar) in the overlay header."""
+        one = self._one_song
+        if one and one.get("mode") == "missed" and one["state"] == "syncing" and one.get("key") == self.track_key:
+            plan, i = one["plan"], min(one["i"], len(one["plan"]) - 1)
+            a, b = plan[i]
+            self.overlay.set_ai_note(f"AI: missed part {i + 1}/{len(plan)}",
+                                     max(0.0, min(1.0, (self.clock.position() - a) / max(b - a, 0.1))))
+            return
         if self._ai_job_key is not None and self._ai_jobs:
             same = self._ai_job_key == self.track_key
             self.overlay.set_ai_note("AI syncing" if same else "AI syncing last song", self._ai_job_frac)
@@ -1224,7 +1237,140 @@ class Controller(QObject):
         self._refresh_ai_window()
         return True
 
+    # ------------------------------------------------------------ listen to the missed parts only
+    def start_missed_parts(self, path: str, title: str, artist: str) -> bool:
+        """Play just the parts of a song the AI missed (Spotify jumps to each), listen to them and
+        merge what's heard into the song's timing - instead of playing the whole song again."""
+        if not self._ai_ready():
+            self.notify("Turn on AI sync and download a model first.", "info", 4000)
+            return False
+        d = ai_sync.load_details(Path(path))
+        if not d or not d.get("words"):
+            self.notify(f"“{title}” has no saved words yet – sync it once more (from version 1.19.0 on) "
+                        "to use this.", "info", 6000)
+            return False
+        res, plan = ai_sync.plan_missed_parts(d)
+        if not plan:
+            self.notify(f"The AI already heard every line of “{title}”.", "info", 4000)
+            return False
+        secs = sum(b - a for a, b in plan)
+        self._one_song = {"title": title, "artist": artist, "state": "waiting", "mode": "missed",
+                          "path": path, "plan": plan, "i": 0, "details": d,
+                          "note": f"{len(plan)} part{'s' if len(plan) != 1 else ''} to listen to "
+                                  f"(about {secs:.0f} s of the song)."}
+        if self.track and self._same_song(title, artist, self.track.title, self.track.artist):
+            self._patch_begin(self.track)
+        else:
+            from urllib.parse import quote
+            QDesktopServices.openUrl(QUrl("spotify:search:" + quote(f"{title} {artist}")))
+            self._one_song["note"] = "Spotify is showing it – press play on the song."
+        self._refresh_ai_window()
+        return True
+
+    def _patch_jump(self, seconds: float):
+        if not self.demo:
+            self.watcher.request(f"seek:{seconds:.2f}")
+            self.watcher.request("play")
+        self.clock.reset(seconds, True)
+        if self._one_song is not None:
+            self._one_song["jumped"] = _time.monotonic()
+        if self.ai_listener is not None:
+            self.ai_listener.hold(0.9)          # Spotify may still be playing the old spot for a moment
+
+    def _patch_begin(self, st):
+        one = self._one_song
+        if not st.can_seek and not self.demo:
+            one["note"] = "Spotify isn't letting the app jump within songs right now – try again in a moment."
+            return
+        one.update(state="syncing", key=st.track_key, i=0)
+        self._ai_ctx = None
+        if self.ai_listener is None:
+            self.ai_listener = ai_sync.Listener(self._ai_state, self._ai_target)
+        self.ai_listener.take()
+        self.ai_listener.arm(st.track_key, st.duration or 0.0)
+        self._patch_jump(one["plan"][0][0])
+        one["note"] = f"Listening to missed part 1 of {len(one['plan'])}…"
+        self._refresh_ai_window()
+
+    def _patch_check(self):
+        one = self._one_song
+        plan, i = one["plan"], one["i"]
+        if _time.monotonic() - one.get("jumped", 0.0) < 1.5:
+            return                              # an old position from before the jump may still arrive
+        pos = self.clock.position()
+        if pos < plan[i][1]:
+            return
+        if pos > plan[i][1] + 4.0:              # the jump didn't happen (still somewhere else) - ask again
+            self._patch_jump(plan[i][0])
+            return
+        i += 1
+        one["i"] = i
+        if i < len(plan):
+            self._patch_jump(plan[i][0])
+            one["note"] = f"Listening to missed part {i + 1} of {len(plan)}…"
+            self._refresh_ai_window()
+            return
+        # all parts heard: stop Spotify and let the AI work
+        if not self.demo:
+            self.watcher.request("pause")
+        rec = self.ai_listener.take() if self.ai_listener is not None else None
+        one["state"] = "processing"
+        one["note"] = "Done listening – Spotify paused. The AI is working on the missed parts…"
+        if rec is None or not rec.segments:
+            one["state"] = "waiting"
+            one["note"] = "Nothing was recorded – press play on the song to try again."
+            return
+        model_dir = self.ai_store.path(self.s.ai_model)
+        vocals = self.ai_store.path("vocals") if (self.s.ai_vocals and self.ai_store.installed("vocals")) else None
+        threads, key = self.s.ai_threads, one["key"]
+        self._ai_jobs += 1
+        session = dict(one)
+
+        def work():
+            win32.set_background_priority(True)
+            try:
+                return ai_sync.patch_job(session["details"], rec, model_dir, session["title"], session["artist"],
+                                         threads, vocals,
+                                         progress=lambda f: self.bridge.ai_job_progress.emit(key, f))
+            except Exception as e:
+                log.exception("listening to the missed parts failed")
+                return e
+            finally:
+                win32.set_background_priority(False)
+        self.ai_pool.submit(work).add_done_callback(lambda f: self.bridge.ai_patch_done.emit(session, f.result()))
+        self._refresh_ai_window()
+
+    def _on_ai_patch_done(self, session, out):
+        self._ai_jobs = max(0, self._ai_jobs - 1)
+        if session.get("key") == self._ai_job_key:
+            self._ai_job_key, self._ai_job_frac = None, None
+        if self._one_song and self._one_song.get("path") == session["path"]:
+            self._one_song = None
+        self._update_ai_indicator()
+        title = session["title"]
+        if isinstance(out, Exception) or not out[0]:
+            why = out if isinstance(out, Exception) else out[2]
+            self.notify(f"Listening to the missed parts of “{title}” didn't work ({why}).", "warning", 6000,
+                        keep=True)
+            self._refresh_ai_window()
+            return
+        text, res, msg = out
+        p = Path(session["path"])
+        p.write_text(text, encoding="utf-8")
+        d = session["details"]
+        ai_sync.save_details(p, d.get("lines") or [], res, d.get("orig"))
+        self.notify(f"Missed parts of “{title}”: {msg} (now {res.matched_lines}/{res.lyric_lines} lines). "
+                    "Spotify stays paused.", "success" if "more" in msg and "didn't" not in msg else "info",
+                    6000, keep=True)
+        if self.track and self.track.title == title:
+            self._fetch(self.track)
+        self._refresh_synced()
+        self._refresh_ai_window()
+
     def cancel_one_song(self):
+        if self._one_song and self._one_song.get("mode") == "missed" and self.ai_listener is not None \
+                and self._one_song["state"] == "syncing":
+            self.ai_listener.take()
         self._one_song = None
         self._refresh_ai_window()
 
@@ -1238,9 +1384,15 @@ class Controller(QObject):
         elif one["state"] == "syncing":
             one["state"] = "waiting"
             one["note"] = "Another song started before it finished – press play on it again to sync it."
+            if one.get("mode") == "missed" and self.ai_listener is not None:
+                self.ai_listener.take()
+                one["i"] = 0
 
     def _one_song_begin(self, st):
         one = self._one_song
+        if one.get("mode") == "missed":
+            self._patch_begin(st)
+            return
         one.update(state="syncing", key=st.track_key, paused=False, note="Listening – it pauses Spotify at the end.")
         self.ai_lyrics.forget(st.title, st.artist)          # make a fresh AI timing
         self._ai_skipped.pop(st.track_key, None)
@@ -1257,6 +1409,9 @@ class Controller(QObject):
         """Every 1/4 s: pause Spotify just before the song ends, so it doesn't go on to the next one."""
         one = self._one_song
         if not one or one["state"] != "syncing" or one.get("key") != self.track_key or not self.track:
+            return
+        if one.get("mode") == "missed":
+            self._patch_check()
             return
         dur = self.track.duration or 0
         if dur and self.clock.position() >= dur - 1.5 and not one.get("paused"):
