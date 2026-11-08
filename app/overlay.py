@@ -1077,7 +1077,7 @@ class OverlayWindow(QWidget):
         note = self.ai_note_text()
         if note and sfm.horizontalAdvance(sub) <= right_edge - x:
             start = x + sfm.horizontalAdvance(sub[:len(sub) - len(label)]) if label else x
-            self._paint_ai_bar(p, start, sfm.horizontalAdvance(note), sub_base - sfm.ascent() - 3)
+            self._paint_ai_bar(p, start, sfm.horizontalAdvance(note), sub_base + sfm.descent() + 2)   # under it here
 
     def _paint_progress(self, p: QPainter, area):
         if self.duration <= 0:
