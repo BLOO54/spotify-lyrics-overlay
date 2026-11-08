@@ -1026,7 +1026,7 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
     total = max(sum(s.seconds for s in pieces), 0.1)
     # how much of the progress bar each step gets
     w_sep = 0.35 if job.vocals_dir else 0.0
-    w_pass2 = 0.2 if job.second_pass else 0.0
+    w_pass2 = 0.25 if (job.second_pass or job.vocals_dir) else 0.0
     w_pass1 = 1.0 - w_sep - w_pass2
 
     def report(x):
@@ -1036,52 +1036,43 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
     model = load_whisper(model_dir, threads) if isinstance(model_dir, (str, Path)) else model_dir
     extras: list[str] = []
 
-    # ---- 1. the audio (voice only, if asked)
-    audio_pieces: list[tuple[float, object]] = []
-    voiced: dict[int, list] = {}           # piece number -> where the separated voice is singing
+    # ---- 1. the song as recorded, and (if asked) a voice-only copy
+    orig_pieces: list[tuple[float, object]] = []
+    voc_pieces: list[tuple[float, object]] = []
     loud = 0.0
-    separator = None
+    for seg in pieces:
+        audio = np.concatenate(seg.frames).astype(np.float32)
+        loud = max(loud, float(np.sqrt(np.mean(audio * audio))) if len(audio) else 0.0)
+        orig_pieces.append((seg.start, audio))
+    if loud < 1e-4:
+        return None, None, "the recording was silent (is Spotify playing on a different sound device?)"
     if job.vocals_dir:
         try:
             from .vocals import VocalSeparator
             separator = VocalSeparator(job.vocals_dir, threads)
-        except Exception as e:
-            log.warning("vocal separation unavailable: %s", e)
-            extras.append("vocal separation didn't work")
-    done = 0.0
-    for seg in pieces:
-        audio = np.concatenate(seg.frames).astype(np.float32)
-        loud = max(loud, float(np.sqrt(np.mean(audio * audio))) if len(audio) else 0.0)
-        if separator is not None and loud >= 1e-4:
-            try:
-                audio = separator.isolate(audio, SAMPLE_RATE,
-                                          lambda f, d=done, n=seg.seconds: report(w_sep * (d + f * n) / total))
-                from .vocals import voiced_parts
-                voiced[len(audio_pieces)] = voiced_parts(audio, SAMPLE_RATE)
+            done = 0.0
+            for start, audio in orig_pieces:
+                n = len(audio) / SAMPLE_RATE
+                voice = separator.isolate(audio, SAMPLE_RATE,
+                                          lambda f, d=done, n=n: report(w_sep * (d + f * n) / total))
+                voc_pieces.append((start, voice))
                 if DEBUG_DUMP:
-                    _dump_wav(Path(DEBUG_DUMP), audio)
-            except Exception as e:
-                log.warning("vocal separation failed: %s", e)
-                separator = None
-                extras.append("vocal separation didn't work")
-        audio_pieces.append((seg.start, audio))
-        done += seg.seconds
-    if loud < 1e-4:
-        return None, None, "the recording was silent (is Spotify playing on a different sound device?)"
-    if separator is not None:
-        extras.append("vocals separated")
+                    _dump_wav(Path(DEBUG_DUMP), voice)
+                done += n
+        except Exception as e:
+            log.warning("vocal separation didn't work: %s", e)
+            voc_pieces = []
+            extras.append("vocal separation didn't work")
     report(w_sep)
 
-    # ---- 2. listen to the whole song
+    # ---- 2. listen to the whole song (the normal recording - on its own the voice-only copy loses
+    #         too much, so it's only used below to catch lines this listen missed)
     heard: list[Heard] = []
     done = 0.0
-    for num, (start, audio) in enumerate(audio_pieces):
+    for start, audio in orig_pieces:
         n = len(audio) / SAMPLE_RATE
         part = lambda f, d=done, n=n: report(w_sep + w_pass1 * (d + f * n) / total)
-        if num in voiced and not voiced[num]:
-            done += n
-            continue                       # nobody sings in this piece
-        for w in transcribe(model, audio, lang, prompt, threads, part, voiced.get(num)):
+        for w in transcribe(model, audio, lang, prompt, threads, part):
             heard.append(Heard(w.text, w.start + start, w.end + start))
         done += n
     heard.sort(key=lambda w: w.start)
@@ -1090,42 +1081,60 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
     res = align(job.lines, heard, job.orig_starts)
     report(w_sep + w_pass1)
 
-    # ---- 3. listen again to just the parts it missed, told what to expect
-    if job.second_pass and res.matched_lines < res.lyric_lines:
+    # ---- 3. go back over the parts it missed, told which lyrics to expect there: in the normal
+    #         recording ("second listen") and/or the voice-only copy. A result is only kept if
+    #         more lines are matched, so these can't make the timing worse.
+    sources = []
+    if job.second_pass:
+        sources.append(("2nd listen", orig_pieces, False))
+    if voc_pieces:
+        sources.append(("voice track", voc_pieces, True))
+    if sources and res.matched_lines < res.lyric_lines:
+        from .vocals import voiced_parts
         windows = missed_windows(res, job.lines)[:24]
         before = res.matched_lines
-        for k, (t0, t1, idxs) in enumerate(windows):
-            report(w_sep + w_pass1 + w_pass2 * k / max(len(windows), 1))
-            clip = _clip(audio_pieces, t0, t1)
-            if clip is None:
-                continue
-            c0, audio = clip
-            span = len(audio) / SAMPLE_RATE
+        gains = {name: 0 for name, _, _ in sources}
+        steps = max(len(windows) * len(sources), 1)
+        step = 0
+        for t0, t1, idxs in windows:
             hint = " ".join(job.lines[i] for i in idxs)[:220]
-            parts = None
-            if voiced:                              # voice-only audio: just the sung bits of this clip
-                from .vocals import voiced_parts
-                parts = voiced_parts(audio, SAMPLE_RATE)
-                if not parts:
+            for name, src, voice_only in sources:
+                report(w_sep + w_pass1 + w_pass2 * step / steps)
+                step += 1
+                if all(res.heard[i] for i in idxs):
+                    break                               # an earlier source already got these lines
+                clip = _clip(src, t0, t1)
+                if clip is None:
                     continue
-            try:
-                again = transcribe(model, audio, lang, hint, threads, None, parts)
-            except Exception as e:
-                log.warning("second listen failed: %s", e)
-                break
-            if not again or len(again) > 7 * max(span, 1.0):        # nonsense (far too many words)
-                continue
-            # only the missed part itself is replaced: the window runs a little into the next (already
-            # heard) line so a late start isn't cut off, but those words are kept from the first listen
-            core_end = min(c0 + span, t1 - 1.0)
-            got = [Heard(w.text, w.start + c0, w.end + c0) for w in again if w.start + c0 < core_end]
-            cand = sorted([w for w in heard if not (c0 <= w.start < core_end)] + got, key=lambda w: w.start)
-            res2 = align(job.lines, cand, job.orig_starts)
-            if res2.matched_lines > res.matched_lines:
-                heard, res = cand, res2
-        if res.matched_lines > before:
-            extras.append(f"2nd listen found {res.matched_lines - before} more")
-        log.info("second listen: %d -> %d lines", before, res.matched_lines)
+                c0, audio = clip
+                span = len(audio) / SAMPLE_RATE
+                parts = None
+                if voice_only:                          # only where someone sings: no words "heard" in silence
+                    parts = voiced_parts(audio, SAMPLE_RATE)
+                    if not parts:
+                        continue
+                try:
+                    again = transcribe(model, audio, lang, hint, threads, None, parts)
+                except Exception as e:
+                    log.warning("%s failed: %s", name, e)
+                    continue
+                if not again or len(again) > 7 * max(span, 1.0):        # nonsense (far too many words)
+                    continue
+                # only the missed part itself is replaced: the window runs a little into the next (already
+                # heard) line so a late start isn't cut off, but those words are kept from the first listen
+                core_end = min(c0 + span, t1 - 1.0)
+                got = [Heard(w.text, w.start + c0, w.end + c0) for w in again if w.start + c0 < core_end]
+                cand = sorted([w for w in heard if not (c0 <= w.start < core_end)] + got, key=lambda w: w.start)
+                res2 = align(job.lines, cand, job.orig_starts)
+                if res2.matched_lines > res.matched_lines:
+                    gains[name] += res2.matched_lines - res.matched_lines
+                    heard, res = cand, res2
+        for name, g in gains.items():
+            if g:
+                extras.append(f"{name} found {g} more")
+        log.info("going over missed parts: %d -> %d lines %s", before, res.matched_lines, gains)
+    elif voc_pieces:
+        extras.append("voice track not needed")
     report(1.0)
 
     need = 0.3 if job.orig_starts else 0.55

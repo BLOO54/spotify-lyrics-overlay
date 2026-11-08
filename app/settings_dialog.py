@@ -626,12 +626,13 @@ class SettingsDialog(QDialog):
         self._w["ai_second_pass"] = self._check("Second listen: go back over the parts it missed, knowing which "
                                                 "lyrics to expect there", "ai_second_pass")
         f.addRow(self._w["ai_second_pass"])
-        self._w["ai_vocals"] = self._check("Separate the vocals from the music before listening "
-                                           "(about 40 MB download)", "ai_vocals")
+        self._w["ai_vocals"] = self._check("Voice track: separate the voice from the music to catch lines it "
+                                           "missed (about 40 MB download)", "ai_vocals")
         f.addRow(self._w["ai_vocals"])
-        f.addRow(_hint("Each song is still only done once. Roughly, per song: second listen adds 30 s–2 min, "
-                       "vocal separation 1–3 min, and the Max model takes 2–3× as long as Best. Vocal separation "
-                       "helps most with loud, busy songs (it uses Spleeter by Deezer)."))
+        f.addRow(_hint("Each song is still only done once, and these only ever add lines – never make the timing "
+                       "worse. Roughly, per song: second listen adds 30 s–2 min, the voice track 1–3 min, and the "
+                       "Max model takes 2–3× as long as Best. Recommended: second listen on. The voice track helps "
+                       "most with loud, busy songs (it uses Spleeter by Deezer)."))
         self._w["ai_progress_style"] = ap = QComboBox()
         ap.addItem("Bar and %", "bar")
         ap.addItem("Only %", "percent")

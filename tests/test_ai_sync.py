@@ -367,7 +367,7 @@ def test_second_listen_finds_missed_lines(monkeypatch):
     job.second_pass = True
     text, res, note = AS.run_job(job, None, 2)
     assert res.matched_lines == 6, (res.heard, note)
-    assert "2nd listen found 2 more" in note
+    assert "2nd listen found 2 more" in note, note
     assert abs(res.starts[2] - 14.0) < 0.1 and abs(res.starts[3] - 20.0) < 0.1
 
 
@@ -410,3 +410,57 @@ def test_voiced_parts_and_normalise():
     assert abs(parts[1][0] - 5.65) < 0.1 and abs(parts[1][1] - 7.35) < 0.1
     assert abs(float(np.abs(normalise(y)).max()) - 0.6) < 0.01
     assert voiced_parts(np.zeros(rate * 3, dtype=np.float32), rate) == []
+
+
+def _voice_job(monkeypatch, voice_words):
+    """First listen misses lines 2-3; the voice-only copy hears `voice_words` (None = nonsense)."""
+    import numpy as np
+
+    import app.ai_sync as AS
+    import app.vocals as V
+    lines = ["one two three four five", "six seven eight nine ten", "the chorus goes like this tonight",
+             "and then it goes like that", "eleven twelve thirteen fourteen", "fifteen sixteen seventeen"]
+    truth = [2.0, 8.0, 14.0, 20.0, 26.0, 32.0]
+
+    class FakeSep:
+        def __init__(self, *a, **k): pass
+        def isolate(self, audio, rate=16000, progress=None):
+            return np.full(len(audio), 0.3, dtype=np.float32)       # "voice" everywhere
+    monkeypatch.setattr(V, "VocalSeparator", FakeSep)
+    clip_start = [0.0]
+    real_clip = AS._clip
+
+    def spy_clip(pieces, t0, t1):
+        got = real_clip(pieces, t0, t1)
+        if got:
+            clip_start[0] = got[0]
+        return got
+
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None, parts=None):
+        if len(audio) / AS.SAMPLE_RATE > 50:          # first listen of the normal recording
+            return [AS.Heard(w, truth[i] + 0.4 * j, truth[i] + 0.4 * j + 0.3)
+                    for i in (0, 1, 4, 5) for j, w in enumerate(lines[i].split())]
+        if parts is None:
+            return []                                 # second listen of the normal recording: nothing
+        if voice_words is None:
+            return [AS.Heard("noise", 0.1 * k, 0.1 * k + 0.05) for k in range(6)]
+        return [AS.Heard(w, truth[i] - clip_start[0] + 0.4 * j, truth[i] - clip_start[0] + 0.4 * j + 0.3)
+                for i in voice_words for j, w in enumerate(lines[i].split())]
+    monkeypatch.setattr(AS, "transcribe", fake_transcribe)
+    monkeypatch.setattr(AS, "_clip", spy_clip)
+    monkeypatch.setattr(AS, "load_whisper", lambda *a, **k: "model")
+    job = _job_with_audio(lines)
+    job.vocals_dir = "somewhere"
+    return AS, job
+
+
+def test_voice_track_finds_missed_lines(monkeypatch):
+    AS, job = _voice_job(monkeypatch, (2, 3))
+    text, res, note = AS.run_job(job, None, 2)
+    assert res.matched_lines == 6 and "voice track found 2 more" in note, note
+
+
+def test_voice_track_never_makes_it_worse(monkeypatch):
+    AS, job = _voice_job(monkeypatch, None)            # the voice copy only gives nonsense
+    text, res, note = AS.run_job(job, None, 2)
+    assert res.matched_lines == 4 and "found" not in note, note

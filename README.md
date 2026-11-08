@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.18.3.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.19.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.18.3.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.19.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -187,6 +187,12 @@ have unsynced lyrics online.
   while it works out the timing (with a thin progress bar above - *Progress in overlay* can show only the %, or
   turn it off), and
   **AI timing** once a song uses the AI timing (only while AI sync is on; needs *Show song title* on).
+- **Extra accuracy** (Settings → Lyrics & translation → AI sync, all off by default, each song is still done once):
+  - **Max model** (about 3 GB): the most accurate speech model, 2-3× slower than Best.
+  - **Second listen** (recommended): goes back over just the parts it missed, told which lyrics to expect there.
+  - **Voice track** (about 40 MB download): separates the voice from the music (Spleeter by Deezer) and listens to
+    the missed parts again in that. Helps most with loud, busy songs.
+  These only keep a result when it matches *more* lines, so they can't make the timing worse - they just take longer.
 - The sound is held in memory only - never saved to disk or uploaded. Each song's timing is a tiny `.lrc` file
   in `%APPDATA%\SpotifyLyricsOverlay\ai_lyrics`.
 - Your own synced files (the tap-along tool) come first; turn off **Use my own synced files** to let AI sync time
@@ -208,7 +214,7 @@ Settings → **AI sync** → *Open the AI sync window*: what the AI is doing rig
 progress), a checklist of what it needs, and every song it synced - pick one to see which lyric lines it **heard**
 ✔ and which it **missed** ✖ (missed lines are timed from the lines around them).
 **Re-match** (same window, on a song's details): matches the words the AI heard to the lyrics again with the
-app's newest matching - no need to play the song again. Works for songs synced from version 1.18.3 on.
+app's newest matching - no need to play the song again. Works for songs synced from version 1.19.0 on.
 **Sync one song** (same window): search a song and press *Sync this song* - Spotify shows it, you press play,
 the AI listens to just that song (from the start) and pauses Spotify when it ends so nothing else plays. The heard / missed list is saved
 for songs synced from version 1.18 on.
