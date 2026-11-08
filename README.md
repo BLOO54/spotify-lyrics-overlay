@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.20.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.21.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.20.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.21.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -218,6 +218,12 @@ app's newest matching - no need to play the song again. Works for songs synced f
 **Listen to missed parts only** (same window, on a song with missed lines): Spotify jumps to each part the AI
 missed (a couple of seconds before it), the AI listens to just those bits, then Spotify pauses and the new words
 are merged into the timing - no need to play the whole song again. Works for songs synced from version 1.19.0 on.
+It's told exactly which words to listen for (the missed lines become "hotwords"), tries each missed line on its own
+in a short clip, and accepts words that only *sound* like the lyric there. When it's done, the window and a
+notification say how many new lines and words it found, and those lines are marked **NEW**.
+**Spotify's Crossfade**: with Crossfade on, Spotify starts the next song while the last seconds of a song still
+play. The AI keeps listening to those last seconds (mixed with the next song), but endings are caught best with
+Crossfade off (Spotify → Settings → Playback → Crossfade songs). The AI window's checklist shows if it's on.
 **Sync one song** (same window): search a song and press *Sync this song* - Spotify shows it, you press play,
 the AI listens to just that song (from the start) and pauses Spotify when it ends so nothing else plays. The heard / missed list is saved
 for songs synced from version 1.18 on.
