@@ -115,6 +115,20 @@ def self_test(report_path: str | None) -> int:
             lines.append(f"✔ Sound output found for AI sync: {sp.name}")
         except Exception as e:
             lines.append(f"• No sound output to listen to right now ({e})")
+        if sys.platform == "win32":
+            from app.ai_sync import run_probe
+            from app.app_audio import find_app_pid
+            pid = find_app_pid("Spotify.exe")
+            if pid is None:
+                lines.append("• AI sync 'Only Spotify': open Spotify to check it")
+            else:
+                rep = run_probe(pid)
+                if rep.get("ok"):
+                    loud = "and heard sound" if rep.get("rms", 0) > 1e-4 else "(silent - play a song to hear it)"
+                    lines.append(f"✔ AI sync can listen to Spotify by itself {loud}")
+                else:
+                    lines.append(f"• AI sync can't listen to Spotify by itself here - it will use the whole PC "
+                                 f"({rep.get('error')})")
     except Exception as e:
         add(False, f"AI sync check failed: {e}")
 
@@ -202,6 +216,8 @@ def main() -> int:
                         help="CI: run AI sync on a recording and write a report")
     parser.add_argument("--ai-store", help="CI: folder for the AI model")
     parser.add_argument("--listen-test", help="CI: try recording the PC's sound, report to FILE")
+    parser.add_argument("--app-audio-probe", nargs=2, metavar=("PID", "OUT"),
+                        help="check that one app's sound can be recorded (used by AI sync)")
     args, _ = parser.parse_known_args()
 
     log_file = setup_logging()
@@ -210,6 +226,14 @@ def main() -> int:
     if args.ai_test:
         from app.ai_sync import cli_test
         return cli_test(*args.ai_test, store_dir=args.ai_store)
+    if args.app_audio_probe:
+        import json
+        from app.app_audio import probe
+        pid, out = args.app_audio_probe
+        rep = probe(int(pid))
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(rep, fh)
+        return 0
     if args.listen_test:
         from app.ai_sync import listen_test
         return listen_test(args.listen_test)

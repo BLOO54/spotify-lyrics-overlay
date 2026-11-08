@@ -564,6 +564,12 @@ class SettingsDialog(QDialog):
         at.setCurrentIndex(max(0, at.findData(self.s.ai_threads)))
         at.currentIndexChanged.connect(lambda i: self._set("ai_threads", at.itemData(i)))
         f.addRow("CPU use", at)
+        self._w["ai_listen"] = al = QComboBox()
+        al.addItem("Only Spotify (ignores game sound, Discord…)", "app")
+        al.addItem("Everything the PC plays", "pc")
+        al.setCurrentIndex(max(0, al.findData(self.s.ai_listen)))
+        al.currentIndexChanged.connect(lambda i: self._set("ai_listen", al.itemData(i)))
+        f.addRow("Listen to", al)
         self.ai_status = QLabel("")
         self.ai_status.setWordWrap(True)
         self.ai_status.setStyleSheet("color:#c9c9d6;")
@@ -586,7 +592,8 @@ class SettingsDialog(QDialog):
         f.addRow(aholder)
         f.addRow(_hint("Tip: the AI only starts once a song has played (nearly) to the end, and runs at low "
                        "priority so games stay smooth. Tray menu → \"AI sync: listen to this song again\" "
-                       "redoes a song. Game sound playing at the same time can make it less accurate."))
+                       "redoes a song. \"Only Spotify\" needs Windows 10 (version 2004 or newer) or Windows 11 – "
+                       "otherwise it listens to the whole PC, where loud game sound can make it less accurate."))
         self._ai_busy = False
 
         sep = QLabel("<b>Translation</b>")

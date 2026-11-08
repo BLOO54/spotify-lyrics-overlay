@@ -180,6 +180,18 @@ jobs:
           $null = $p.WaitForExit(60000)
           if (Test-Path ci-listen.json) { Get-Content ci-listen.json } else { "no report" }
 
+      - name: Listen to one app only (needs a sound device - info only)
+        continue-on-error: true
+        run: |
+          $player = Start-Process powershell -ArgumentList "-NoProfile","-Command","`$p = New-Object System.Media.SoundPlayer '$PWD\ci-ai-test-song.wav'; try { `$p.PlayLooping() } catch { }; Start-Sleep 40" -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $p = Start-Process $exe -ArgumentList "--app-audio-probe",$player.Id,"$PWD\ci-app-audio.json" -PassThru
+          $done = $p.WaitForExit(30000)
+          "probe finished: $done, exit code: $($p.ExitCode)"
+          if (Test-Path ci-app-audio.json) { Get-Content ci-app-audio.json } else { "no report (the probe crashed?)" }
+          Stop-Process $player -Force -ErrorAction SilentlyContinue
+
       - name: Build installer (Inno Setup)
         run: |
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
@@ -255,6 +267,7 @@ jobs:
             ci-tap-check.txt
             ci-ai-report.json
             ci-listen.json
+            ci-app-audio.json
             ci-ai-test-song.wav
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false

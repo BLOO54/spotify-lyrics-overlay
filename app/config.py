@@ -99,6 +99,7 @@ class Settings:
     ai_sync_enabled: bool = False         # AI sync: listen to each song once and time the lyrics
     ai_model: str = "light"               # "light" (~0.5 GB) | "best" (~1.5 GB)
     ai_threads: int = 2                   # CPU cores the AI may use while it works
+    ai_listen: str = "app"                # "app" = only Spotify's sound | "pc" = everything the PC plays
     popup_style: str = "app"             # "app" = sleek sliding cards + dark menu | "windows" = standard Windows look       # look for new versions on GitHub (start-up + every few hours)
     # Keyboard shortcuts (empty = off). Change them in Settings → Shortcuts.
     hk_toggle: str = "Ctrl+Alt+L"
@@ -168,6 +169,8 @@ class Settings:
         if self.ai_model not in ("light", "best"):
             self.ai_model = "light"
         self.ai_threads = max(1, min(8, int(self.ai_threads)))
+        if self.ai_listen not in ("app", "pc"):
+            self.ai_listen = "app"
         if self.word_timing_mode not in ("syllables", "letters"):
             self.word_timing_mode = "syllables"
         if self.long_lines not in ("widen", "shrink", "wrap"):

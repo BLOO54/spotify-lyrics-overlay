@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import urllib.request
@@ -504,15 +505,49 @@ class Recording:
         return total
 
 
+def run_probe(pid: int, timeout: float = 25.0) -> dict:
+    """Check, in a separate process, that Windows lets us hear just this app.
+    A separate process means a problem there can never crash the overlay."""
+    import subprocess
+    import sys
+    import tempfile
+    out = Path(tempfile.gettempdir()) / f"slo-probe-{os.getpid()}-{pid}.json"
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable]
+    else:
+        cmd = [sys.executable, str(Path(__file__).resolve().parents[1] / "main.py")]
+    cmd += ["--app-audio-probe", str(pid), str(out)]
+    try:
+        out.unlink(missing_ok=True)
+        subprocess.run(cmd, timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        rep = json.loads(out.read_text(encoding="utf-8"))
+    except subprocess.TimeoutExpired:
+        rep = {"ok": False, "error": "the check took too long"}
+    except Exception as e:
+        rep = {"ok": False, "error": f"the check didn't finish ({e})"}
+    finally:
+        try:
+            out.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return rep
+
+
 class Listener:
-    """Records what the PC is playing (WASAPI loopback) on one long-lived thread.
+    """Records the song on one long-lived thread: just the music app when Windows allows
+    it ("app only"), otherwise everything the PC plays (WASAPI loopback).
 
     get_state() -> (track_key, position_seconds, playing) is asked after every half
     second of sound so the audio can be lined up with the song.
+    get_target() -> process id of the music app to listen to, or None for the whole PC.
     """
 
-    def __init__(self, get_state):
+    def __init__(self, get_state, get_target=None):
         self.get_state = get_state
+        self.get_target = get_target
+        self.method = ""                 # "Spotify only" / "whole PC" - shown in Settings
+        self.app_note = ""               # why app-only isn't used, if it isn't
+        self._probed: dict[int, dict] = {}
         self.recording: Recording | None = None
         self.error: str | None = None
         self._lock = threading.Lock()
@@ -554,34 +589,69 @@ class Listener:
                 return
             if self.recording is None:
                 continue
+            pid = None
+            try:
+                pid = self.get_target() if self.get_target else None
+            except Exception:
+                log.exception("finding the music app failed")
+            if pid and self._app_allowed(pid):
+                try:
+                    from .app_audio import AppAudio
+                    with AppAudio(pid) as src:
+                        self.method, self.error = "Spotify only", None
+                        self._pump(lambda n: src.read(n), np,
+                                   still_ok=lambda: (self.get_target() if self.get_target else None) == pid)
+                    continue
+                except Exception as e:
+                    self._probed[pid] = {"ok": False, "error": str(e)}
+                    self.app_note = f"couldn't hear the app by itself ({e})"
+                    log.warning("AI listener (app only): %s - using the whole PC", e)
             try:
                 speaker = sc.default_speaker()
                 mic = sc.get_microphone(id=str(speaker.id), include_loopback=True)
-                log.info("AI sync listening to: %s", speaker.name)
+                log.info("AI sync listening to the whole PC: %s", speaker.name)
                 with mic.recorder(samplerate=SAMPLE_RATE, channels=1, blocksize=1024) as rec:
-                    while not self._quit:
-                        r = self.recording
-                        if r is None:
-                            break
-                        data = rec.record(numframes=int(SAMPLE_RATE * FRAME_SECONDS))
-                        key, pos, playing = self.get_state()
-                        if r is not self.recording:
-                            continue
-                        if key != r.key or not playing:
-                            r.gap()
-                            continue
-                        if r.seconds > MAX_RECORD_SECONDS:
-                            continue
-                        mono = np.asarray(data, dtype=np.float32).reshape(-1)
-                        r.add(mono.copy(), pos)
-                        if sc.default_speaker().id != speaker.id:
-                            log.info("sound output changed - switching")
-                            break
-                self.error = None
+                    self.method, self.error = "whole PC", None
+                    want_app = bool(pid) and pid not in self._probed
+
+                    def same_output():
+                        if want_app or ((self.get_target() if self.get_target else None) != pid):
+                            return False      # the music app appeared / changed: try app-only again
+                        return sc.default_speaker().id == speaker.id
+                    self._pump(lambda n: rec.record(numframes=n), np, still_ok=same_output)
             except Exception as e:
                 self.error = f"couldn't listen to the PC's sound ({e})"
                 log.warning("AI listener: %s", e)
                 time.sleep(3)
+
+    def _app_allowed(self, pid: int) -> bool:
+        """First time for this app: check in a separate process that app-only listening works."""
+        if pid not in self._probed:
+            rep = run_probe(pid)
+            self._probed[pid] = rep
+            log.info("app-only listening check: %s", rep)
+            self.app_note = "" if rep.get("ok") else f"couldn't hear the app by itself ({rep.get('error')})"
+        return bool(self._probed[pid].get("ok"))
+
+    def _pump(self, read, np, still_ok):
+        """Read half-second pieces into the current recording until something changes."""
+        checks = 0
+        while not self._quit:
+            r = self.recording
+            if r is None:
+                return
+            data = read(int(SAMPLE_RATE * FRAME_SECONDS))
+            key, pos, playing = self.get_state()
+            if r is not self.recording:
+                continue
+            if key != r.key or not playing:
+                r.gap()
+            elif r.seconds <= MAX_RECORD_SECONDS:
+                r.add(np.asarray(data, dtype=np.float32).reshape(-1).copy(), pos)
+            checks += 1
+            if checks % 10 == 0 and not still_ok():
+                log.info("AI sync: sound source changed - switching")
+                return
 
 
 # --------------------------------------------------------------------------- the AI
@@ -679,6 +749,8 @@ def listen_test(out: str, seconds: float = 6.0) -> int:
         rep.update(seconds=round(len(a) / SAMPLE_RATE, 2), rms=float(np.sqrt(np.mean(a * a))) if len(a) else 0.0)
     rep["ok"] = rep.get("seconds", 0) > 1
     del state
+    if sys.platform == "win32":
+        rep["app_only_check_on_this_process"] = run_probe(os.getpid())
     Path(out).write_text(json.dumps(rep, indent=1), encoding="utf-8")
     return 0
 

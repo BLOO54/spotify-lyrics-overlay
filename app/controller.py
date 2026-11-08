@@ -784,7 +784,10 @@ class Controller(QObject):
             bits.append("Working out the timing of a song…")
         elif self.ai_listener is not None and self.ai_listener.peek() is not None:
             rec = self.ai_listener.peek()
-            bits.append(f"Listening to this song ({rec.covered():.0f} s heard).")
+            how = f", {self.ai_listener.method}" if self.ai_listener.method else ""
+            bits.append(f"Listening to this song ({rec.covered():.0f} s heard{how}).")
+        if self.ai_listener is not None and self.s.ai_listen == "app" and self.ai_listener.app_note:
+            bits.append(f"Listening to the whole PC instead: {self.ai_listener.app_note}.")
         try:
             done = len(list(self.ai_lyrics.folder.glob("*.lrc")))
             bits.append(f"{done} song{'s' if done != 1 else ''} synced so far.")
@@ -798,6 +801,14 @@ class Controller(QObject):
 
     def _ai_state(self):
         return self.track_key, self.clock.position(), self.clock.playing
+
+    def _ai_target(self):
+        """Process id of the music app, if AI sync should listen to it alone."""
+        if self.s.ai_listen != "app" or not self.track:
+            return None
+        from .app_audio import exe_for_app, find_app_pid
+        exe = exe_for_app(self.track.source_app) or ("Spotify.exe" if self.s.spotify_only else None)
+        return find_app_pid(exe) if exe else None
 
     def _ai_arm(self, result):
         """Lyrics are on screen: start listening, if AI sync should time this song."""
@@ -819,7 +830,7 @@ class Controller(QObject):
             return
         self._ai_ctx = (self.track_key, self.track.title, self.track.artist, lines, orig)
         if self.ai_listener is None:
-            self.ai_listener = ai_sync.Listener(self._ai_state)
+            self.ai_listener = ai_sync.Listener(self._ai_state, self._ai_target)
         self.ai_listener.arm(self.track_key, self.track.duration or 0.0)
         log.info("AI sync: listening to %s - %s", self.track.artist, self.track.title)
 

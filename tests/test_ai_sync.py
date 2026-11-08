@@ -95,3 +95,86 @@ def test_stretched_first_word_is_fixed():
     fixed = fix_stretched(words)
     assert abs(fixed[1].start - 7.4) < 0.35 and fixed[1].end == 7.64
     assert fixed[2].start == 7.64          # normal words untouched
+
+
+def _fake_sound(monkeypatch, app_ok: bool, app_crash: bool = False):
+    import sys
+    import time as _t
+    import types
+
+    import numpy as np
+
+    import app.ai_sync as AS
+    import app.app_audio as AA
+
+    class Rec:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def record(self, numframes):
+            _t.sleep(0.005)
+            return np.full((numframes, 1), 0.2, dtype=np.float32)
+
+    class Spk:
+        id, name = "spk", "Speakers"
+    sc = types.SimpleNamespace(default_speaker=lambda: Spk(),
+                               get_microphone=lambda id, include_loopback: types.SimpleNamespace(
+                                   recorder=lambda **k: Rec()))
+    monkeypatch.setitem(sys.modules, "soundcard", sc)
+
+    class FakeApp:
+        def __init__(self, pid): self.pid = pid
+        def __enter__(self):
+            if app_crash:
+                raise OSError("Windows refused app audio (0x80070005)")
+            return self
+        def __exit__(self, *a): return False
+        def read(self, n):
+            _t.sleep(0.005)
+            return np.full(n, 0.5, dtype=np.float32)
+    monkeypatch.setattr(AA, "AppAudio", FakeApp)
+    monkeypatch.setattr(AS, "run_probe", lambda pid, timeout=25: {"ok": app_ok, "error": None if app_ok else "too old"})
+    return AS
+
+
+def _listen(AS, target):
+    import time as _t
+    pos = {"t": 0.0}
+
+    def state():
+        pos["t"] += 0.5
+        return "song", pos["t"], True
+    lis = AS.Listener(state, lambda: target)
+    lis.arm("song", 200)
+    for _ in range(200):
+        r = lis.peek()
+        if r is not None and r.seconds >= 2:
+            break
+        _t.sleep(0.02)
+    rec = lis.take()
+    lis.stop()
+    return lis, rec
+
+
+def test_listens_to_spotify_only_when_windows_allows(monkeypatch):
+    AS = _fake_sound(monkeypatch, app_ok=True)
+    lis, rec = _listen(AS, 1234)
+    assert lis.method == "Spotify only" and rec.seconds >= 2
+    assert float(rec.segments[0].frames[0][0]) == 0.5        # came from the app, not the speakers
+
+
+def test_falls_back_to_whole_pc(monkeypatch):
+    AS = _fake_sound(monkeypatch, app_ok=False)
+    lis, rec = _listen(AS, 1234)
+    assert lis.method == "whole PC" and rec.seconds >= 2 and "too old" in lis.app_note
+
+
+def test_falls_back_when_app_audio_fails_later(monkeypatch):
+    AS = _fake_sound(monkeypatch, app_ok=True, app_crash=True)
+    lis, rec = _listen(AS, 1234)
+    assert lis.method == "whole PC" and rec.seconds >= 2
+
+
+def test_whole_pc_setting(monkeypatch):
+    AS = _fake_sound(monkeypatch, app_ok=True)
+    lis, rec = _listen(AS, None)
+    assert lis.method == "whole PC"
