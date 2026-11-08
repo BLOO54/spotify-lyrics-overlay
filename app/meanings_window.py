@@ -8,9 +8,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-                               QSplitter, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget, QCheckBox)
+                               QSplitter, QStackedWidget, QStyledItemDelegate, QTextBrowser, QVBoxLayout,
+                               QWidget, QCheckBox)
 
 from .meanings import AiExplainer, GeniusClient, MeaningsError, SongHit, line_explanations
 from .settings_dialog import STYLE
@@ -18,6 +19,8 @@ from .settings_dialog import STYLE
 log = logging.getLogger(__name__)
 
 EXTRA_STYLE = """
+QWidget#meaningsRoot { background: #0f0f15; color: #ececf3; }
+QWidget#meaningsRoot QLabel, QWidget#meaningsRoot QCheckBox { background: transparent; }
 QListWidget#lyrics, QListWidget#results { background: #121219; border: 1px solid #23232e; border-radius: 10px;
     padding: 8px; color: #d9d9e6; font-size: 15px; outline: none; }
 QListWidget#lyrics::item, QListWidget#results::item { padding: 7px 10px; border-radius: 7px; }
@@ -31,7 +34,26 @@ QLabel#credit { color: #6f6f88; font-size: 11px; }
 """
 
 MARK = QColor("#2a2340")          # background of lines Genius explained
+MARK_BAR = QColor("#8b5cf6")      # the little bar on their left
 NOW = QColor("#c4b5fd")           # the line being sung right now
+EXPLAINED = Qt.ItemDataRole.UserRole + 1
+
+
+class _MarkDelegate(QStyledItemDelegate):
+    """Paints the purple marking behind explained lines (styled lists ignore item colours)."""
+
+    def paint(self, painter: QPainter, option, index):
+        if index.data(EXPLAINED):
+            r = option.rect.adjusted(2, 2, -2, -2)
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(MARK)
+            painter.drawRoundedRect(r, 7, 7)
+            painter.setBrush(MARK_BAR)
+            painter.drawRoundedRect(r.left(), r.top() + 6, 3, r.height() - 12, 1.5, 1.5)
+            painter.restore()
+        super().paint(painter, option, index)
 
 
 class MeaningsWindow(QWidget):
@@ -42,6 +64,8 @@ class MeaningsWindow(QWidget):
         self.ctl = ctl
         self.s = ctl.s
         self.setWindowTitle("Song meanings")
+        self.setObjectName("meaningsRoot")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(STYLE + EXTRA_STYLE)
         self.resize(1060, 720)
         self.setMinimumSize(780, 520)
@@ -93,6 +117,8 @@ class MeaningsWindow(QWidget):
         self.lyrics = QListWidget()
         self.lyrics.setObjectName("lyrics")
         self.lyrics.setWordWrap(True)
+        self._delegate = _MarkDelegate(self.lyrics)
+        self.lyrics.setItemDelegate(self._delegate)
         self.lyrics.currentRowChanged.connect(self._line_clicked)
         self.results = QListWidget()
         self.results.setObjectName("results")
@@ -264,7 +290,7 @@ class MeaningsWindow(QWidget):
             if not text.strip():
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
             elif self.line_map[i]:
-                item.setBackground(MARK)
+                item.setData(EXPLAINED, True)
                 explained += 1
             self.lyrics.addItem(item)
             self.rows.append(i)
