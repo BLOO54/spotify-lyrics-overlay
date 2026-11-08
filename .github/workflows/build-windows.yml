@@ -204,7 +204,9 @@ jobs:
           foreach ($name in $runs.Keys) {
             $out = "$PWD\ci-ai-hard-$name.json"
             $t = Measure-Command {
-              $p = Start-Process $exe -ArgumentList "--ai-test","light","$dir\hard.wav","$dir\hard.lrc",$out,"--ai-store","$env:RUNNER_TEMP\aimodels","--ai-options",$runs[$name] -PassThru
+              $argv = @("--ai-test","light","$dir\hard.wav","$dir\hard.lrc",$out,"--ai-store","$env:RUNNER_TEMP\aimodels")
+              if ($runs[$name]) { $argv += @("--ai-options",$runs[$name]) }
+              $p = Start-Process $exe -ArgumentList $argv -PassThru
               if (-not $p.WaitForExit(900000)) { Stop-Process $p -Force; throw "AI test '$name' took too long" }
             }
             if (-not (Test-Path $out)) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 40; throw "no report for '$name' (crashed?)" }
