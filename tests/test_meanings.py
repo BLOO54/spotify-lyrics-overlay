@@ -131,3 +131,52 @@ def test_genius_html_bodies(tmp_path):
     assert m.explanations[0].html == '<p>See</p><img src="https://images.genius.com/p.png">'
     assert m.about_html == "<p><b>About</b></p>"
     assert "text_format=plain%2Chtml" in seen[0].full_url
+
+
+def test_clean_html_finds_pictures_in_other_forms():
+    from app.meanings import clean_html, image_urls
+    out = clean_html("<img src='//images.genius.com/a.gif'><img data-src=\"https://x.com/b.png\">"
+                     '<img srcset="https://x.com/c.webp 2x">'
+                     '<a href="https://media.giphy.com/media/AbC123/giphy.gif">gif</a>'
+                     '<a href="https://giphy.com/gifs/chicken-running-XyZ789">giphy page</a>'
+                     '<a href="https://imgur.com/q1W2e3R">imgur</a>'
+                     '<a href="https://example.com/article">normal link</a>')
+    assert image_urls(out) == ["https://images.genius.com/a.gif", "https://x.com/b.png", "https://x.com/c.webp",
+                               "https://media.giphy.com/media/AbC123/giphy.gif",
+                               "https://media.giphy.com/media/XyZ789/giphy.gif", "https://i.imgur.com/q1W2e3R.jpg"]
+    assert '<a href="https://example.com/article">normal link</a>' in out
+
+
+def test_x_posts_found_and_read():
+    from app.meanings import fetch_x_post, x_posts
+    html_text = ('<p>See <a href="https://x.com/jamiepaige/status/1234567890123">this</a> and '
+                 '<a href="https://twitter.com/jamiepaige/status/1234567890123?s=20">again</a></p>')
+    assert x_posts(html_text) == ["https://twitter.com/jamiepaige/status/1234567890123"]
+    seen = []
+
+    def opener(req, timeout=0):
+        seen.append(req.full_url)
+        return Resp(json.dumps({"author_name": "Jamie Paige", "author_url": "https://twitter.com/jamiepaige",
+                                "html": '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">the chicken '
+                                        'never stops running <a href="https://t.co/abc">pic.twitter.com/abc</a>'
+                                        '</p>&mdash; Jamie Paige (@jamiepaige)</blockquote>'}).encode())
+    post = fetch_x_post("https://twitter.com/jamiepaige/status/1234567890123", opener)
+    assert post == {"author": "Jamie Paige", "handle": "jamiepaige", "text": "the chicken never stops running",
+                    "url": "https://x.com/jamiepaige/status/1234567890123", "pictures": [], "picture": True}
+    assert seen[0].startswith("https://cdn.syndication.twimg.com/tweet-result?")     # tried the embed data first
+    assert seen[1].startswith("https://publish.twitter.com/oembed?")                 # then the official text
+
+
+def test_x_post_with_pictures():
+    from app.meanings import fetch_x_post, x_token
+
+    def opener(req, timeout=0):
+        assert "token=" + x_token("440322224407314432") in req.full_url
+        return Resp(json.dumps({"text": "If only Bradley's arm was longer. https://t.co/C9JjEHlHqU",
+                                "user": {"name": "Ellen DeGeneres", "screen_name": "TheEllenShow"},
+                                "mediaDetails": [{"type": "photo",
+                                                  "media_url_https": "https://pbs.twimg.com/media/BhxWutnCEAAtEQ6.jpg"}]
+                                }).encode())
+    post = fetch_x_post("https://x.com/TheEllenShow/status/440322224407314432", opener)
+    assert post["pictures"] == ["https://pbs.twimg.com/media/BhxWutnCEAAtEQ6.jpg?name=small"]
+    assert post["text"] == "If only Bradley's arm was longer." and post["author"] == "Ellen DeGeneres"

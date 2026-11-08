@@ -57,6 +57,12 @@ jobs:
           python tools/check_song.py "birdbrain" "Jamie Paige" 245 2>&1 | Tee-Object -FilePath lyrics-check.txt
           $global:LASTEXITCODE = 0
 
+      - name: Can posts on X be shown in Song meanings (info only)
+        continue-on-error: true
+        run: |
+          python -c "from app.meanings import fetch_x_post; import json; [print(json.dumps(fetch_x_post(u), ensure_ascii=False)) for u in ('https://x.com/jack/status/20', 'https://x.com/TheEllenShow/status/440322224407314432')]" 2>&1 | Tee-Object -FilePath ci-x-check.txt
+          $global:LASTEXITCODE = 0
+
       - name: Self-test from source (on Windows)
         run: |
           python main.py --self-test --report selftest-source.txt
@@ -273,6 +279,7 @@ jobs:
             ci-ai-report.json
             ci-listen.json
             ci-app-audio.json
+            ci-x-check.txt
             ci-ai-test-song.wav
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false

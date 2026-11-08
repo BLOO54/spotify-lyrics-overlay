@@ -129,31 +129,192 @@ _ALLOWED = {"p", "br", "a", "b", "strong", "i", "em", "u", "blockquote", "ul", "
             "sup", "sub", "h1", "h2", "h3", "h4", "hr", "span", "div"}
 
 
+_IMG_EXT = re.compile(r"\.(gif|png|jpe?g|webp|bmp)(\?[^\s\"']*)?$", re.I)
+
+
+def _attr(attrs: str, name: str) -> str | None:
+    """An attribute's value whether it's written with "double", 'single' or no quotes."""
+    m = re.search(rf"""\b{name}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", attrs, re.I)
+    if not m:
+        return None
+    return html_unescape(next(g for g in m.groups() if g is not None)).strip()
+
+
+def html_unescape(s: str) -> str:
+    import html as _h
+    return _h.unescape(s or "")
+
+
+def _web_url(u: str | None) -> str | None:
+    if not u:
+        return None
+    if u.startswith("//"):
+        u = "https:" + u
+    return u if re.match(r"https?://", u, re.I) else None
+
+
+def picture_for_link(href: str) -> str | None:
+    """If a link points at a picture (or a GIF page we know how to read), the picture's address."""
+    if _IMG_EXT.search(href.split("#")[0]):
+        return href
+    m = re.match(r"https?://(?:www\.)?giphy\.com/(?:gifs|stickers)/(?:[\w-]*-)?([A-Za-z0-9]+)/?$", href)
+    if m:
+        return f"https://media.giphy.com/media/{m.group(1)}/giphy.gif"
+    m = re.match(r"https?://(?:media\d*|i)\.giphy\.com/media/([A-Za-z0-9]+)/", href)
+    if m:
+        return f"https://media.giphy.com/media/{m.group(1)}/giphy.gif"
+    m = re.match(r"https?://(?:www\.|m\.)?imgur\.com/([A-Za-z0-9]{5,8})/?$", href)
+    if m:
+        return f"https://i.imgur.com/{m.group(1)}.jpg"
+    return None
+
+
 def clean_html(s: str) -> str:
     """Genius' explanation HTML, made safe and simple for the meanings window: formatting, links and
-    pictures are kept; scripts, embedded videos, styles and anything unusual are removed."""
+    pictures are kept (links straight to a picture or GIF also show the picture); scripts, embedded
+    videos, styles and anything unusual are removed."""
     s = s or ""
     s = re.sub(r"<(script|style|iframe|object|embed|noscript|svg)\b.*?</\1\s*>", "", s, flags=re.I | re.S)
     s = re.sub(r"<!--.*?-->", "", s, flags=re.S)
+    pending_pics: list[str] = []
+    shown: set[str] = set()
 
     def tag(m):
         closing, name, attrs = m.group(1), m.group(2).lower(), m.group(3) or ""
         if name not in _ALLOWED:
             return ""
         if closing:
+            if name == "a" and pending_pics:
+                pic = pending_pics.pop()
+                if pic not in shown:
+                    shown.add(pic)
+                    return f'</a><br><img src="{pic}"><br>'
             return f"</{name}>"
         keep = ""
         if name == "a":
-            href = re.search(r'href\s*=\s*"(https?://[^"]+)"', attrs, re.I)
-            keep = f' href="{href.group(1)}"' if href else ""
+            href = _web_url(_attr(attrs, "href"))
+            keep = f' href="{href}"' if href else ""
+            pic = picture_for_link(href) if href else None
+            if pic:
+                pending_pics.append(pic)
         elif name == "img":
-            src = re.search(r'src\s*=\s*"(https?://[^"]+)"', attrs, re.I)
+            src = _web_url(_attr(attrs, "src")) or _web_url(_attr(attrs, "data-src"))
             if not src:
+                srcset = _attr(attrs, "srcset") or ""
+                src = _web_url(srcset.split(",")[0].split()[0]) if srcset.strip() else None
+            if not src or src in shown:
                 return ""
-            keep = f' src="{src.group(1)}"'
+            shown.add(src)
+            keep = f' src="{src}"'
         return f"<{name}{keep}>"
     s = re.sub(r"<\s*(/?)\s*([a-zA-Z0-9]+)([^>]*)>", tag, s)
     return s.strip()
+
+
+X_POST = re.compile(r"https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/([A-Za-z0-9_]{1,20})/status(?:es)?/(\d{5,25})")
+
+
+def x_posts(html_text: str) -> list[str]:
+    """Links to posts on X (Twitter) in an explanation, each once."""
+    out: list[str] = []
+    for m in X_POST.finditer(html_text or ""):
+        url = f"https://twitter.com/{m.group(1)}/status/{m.group(2)}"
+        if url not in out:
+            out.append(url)
+    return out
+
+
+def _js_base36(value: float) -> str:
+    """JavaScript's Number.toString(36) for a positive number (fractions included), which X's
+    embed widget uses to make the 'token' for a post."""
+    import math
+    chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+    integer = math.floor(value)
+    fraction = value - integer
+    delta = max(0.5 * (math.nextafter(value, math.inf) - value), math.nextafter(0.0, 1.0))
+    frac_digits: list[str] = []
+    if fraction >= delta:
+        while True:
+            fraction *= 36
+            delta *= 36
+            digit = int(fraction)
+            frac_digits.append(chars[digit])
+            fraction -= digit
+            if fraction > 0.5 or (fraction == 0.5 and (digit & 1)):
+                if fraction + delta > 1:
+                    i = len(frac_digits) - 1          # round up, carrying as needed
+                    while True:
+                        if i < 0:
+                            integer += 1
+                            break
+                        d = chars.index(frac_digits[i]) + 1
+                        if d < 36:
+                            frac_digits[i] = chars[d]
+                            del frac_digits[i + 1:]
+                            break
+                        i -= 1
+                        del frac_digits[i + 1:]
+                    break
+            if fraction < delta:
+                break
+    ints = ""
+    while True:
+        integer, r = divmod(integer, 36)
+        ints = chars[int(r)] + ints
+        if integer == 0:
+            break
+    return ints + ("." + "".join(frac_digits) if frac_digits else "")
+
+
+def x_token(post_id: str) -> str:
+    import math
+    return re.sub(r"(0+|\.)", "", _js_base36((int(post_id) / 1e15) * math.pi))
+
+
+def fetch_x_post(url: str, opener=None) -> dict:
+    """A post's author, text and pictures, the way X's own embed widget loads them (the same thing
+    Genius shows). If that doesn't work, X's official embed service still gives the text."""
+    open_ = opener or urllib.request.urlopen
+    m = X_POST.search(url)
+    post_id = m.group(2) if m else ""
+    try:
+        q = urllib.parse.urlencode({"id": post_id, "lang": "en", "token": x_token(post_id)})
+        req = urllib.request.Request(f"https://cdn.syndication.twimg.com/tweet-result?{q}",
+                                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with open_(req, timeout=TIMEOUT) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        user = data.get("user") or {}
+        pics = []
+        for md in data.get("mediaDetails") or []:
+            u = md.get("media_url_https")
+            if u:
+                pics.append(u + ("?name=small" if "pbs.twimg.com/media/" in u else ""))
+        if not pics:
+            pics = [p.get("url") for p in data.get("photos") or [] if p.get("url")]
+        text = re.sub(r"\s*https?://t\.co/\S+", "", data.get("text") or "").strip()
+        if user or text or pics:
+            handle = user.get("screen_name") or (m.group(1) if m else "")
+            return {"author": user.get("name") or handle, "handle": handle, "text": text,
+                    "url": f"https://x.com/{handle}/status/{post_id}", "pictures": pics[:4],
+                    "picture": bool(pics)}
+    except Exception as e:
+        log.info("X embed data not available for %s (%s) - using X's official embed service", post_id, e)
+    q = urllib.parse.urlencode({"url": url, "omit_script": "1", "dnt": "true", "lang": "en"})
+    req = urllib.request.Request(f"https://publish.twitter.com/oembed?{q}", headers={"User-Agent": USER_AGENT})
+    try:
+        with open_(req, timeout=TIMEOUT) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        raise MeaningsError("Couldn't load that post from X.") from e
+    body = data.get("html") or ""
+    para = re.search(r"<p[^>]*>(.*?)</p>", body, re.S)
+    text = html_to_text(para.group(1)) if para else ""
+    has_picture = "pic.twitter.com" in text or "pic.x.com" in text
+    text = re.sub(r"\s*(?:https?://)?pic\.(?:twitter|x)\.com/\S+", "", text).strip()
+    text = re.sub(r"\s*https?://t\.co/\S+$", "", text).strip()
+    handle = (data.get("author_url") or "").rstrip("/").rsplit("/", 1)[-1]
+    return {"author": data.get("author_name") or handle, "handle": handle, "text": text,
+            "url": url.replace("twitter.com", "x.com"), "pictures": [], "picture": has_picture}
 
 
 def image_urls(html_text: str) -> list[str]:
@@ -229,7 +390,7 @@ class GeniusClient:
         return best if best_score >= 3 else None
 
     def meanings(self, hit: SongHit) -> SongMeanings:
-        cache = self._cache(f"song2|{hit.genius_id}")
+        cache = self._cache(f"song3|{hit.genius_id}")
         got = self._read(cache)
         if got is not None:
             return got
@@ -248,6 +409,9 @@ class GeniusClient:
                     body = (an.get("body") or {}).get("plain") or html_to_text((an.get("body") or {}).get("html", ""))
                     if not body.strip() or an.get("state") == "rejected":
                         continue
+                    raw = (an.get("body") or {}).get("html") or ""
+                    if "http" in raw:
+                        log.info("Genius explanation with links/pictures (%s): %s", frag[:40], raw[:900])
                     out.explanations.append(Explanation(
                         frag, body.strip(), int(an.get("votes_total") or 0), bool(an.get("verified")),
                         (ref.get("classification") or "accepted") != "unreviewed", an.get("url") or "",

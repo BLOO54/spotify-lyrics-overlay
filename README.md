@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.17.3.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.17.4.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.17.3.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.17.4.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -206,6 +206,9 @@ Settings → Song meanings. Lines with a purple
 background have an explanation on Genius; **Follow the song** highlights the line being sung.
 - Needs a free **Genius access token** (once): sign in at genius.com/api-clients → *New API Client* →
   *Generate Access Token* → paste it in Settings → Song meanings. Without one you can still search and read lyrics.
+- Pictures in explanations show right in the window, like on Genius - including pictures from posts on X, which
+  are loaded the way X's own embed widget loads them (if X ever changes that, the post's text and an *Open on X*
+  link are shown instead).
 - **AI backup** (optional, off by default): lines Genius hasn't explained are explained by Claude using your own
   Anthropic API key (a fraction of a cent per line, only when you click one; answers are remembered).
 

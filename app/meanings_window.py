@@ -15,7 +15,10 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit
                                QPushButton, QStackedWidget, QStyle, QStyledItemDelegate, QTextBrowser, QVBoxLayout,
                                QWidget)
 
-from .meanings import AiExplainer, GeniusClient, MeaningsError, SongHit, image_urls, line_explanations
+from .meanings import (AiExplainer, GeniusClient, MeaningsError, SongHit, fetch_x_post, image_urls,
+                       line_explanations, x_posts)
+
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SpotifyLyricsOverlay"
 from .settings_dialog import STYLE
 
 log = logging.getLogger(__name__)
@@ -145,6 +148,7 @@ class MeaningsWindow(QWidget):
     _done = Signal(int, str, object)       # request number, what, result (or MeaningsError)
     _art = Signal(int, object)             # request number, image bytes
     _pic = Signal(str, object)             # picture url, image bytes (pictures inside explanations)
+    _xpost = Signal(str, object)           # X post url, post info dict (or None)
 
     def __init__(self, ctl):
         super().__init__(None)
@@ -164,8 +168,13 @@ class MeaningsWindow(QWidget):
         self._done.connect(self._on_done)
         self._art.connect(self._on_art)
         self._pic.connect(self._on_picture)
+        self._xpost.connect(self._on_x_post)
         self._pictures: dict[str, QImage] = {}
         self._pictures_pending: set[str] = set()
+        self._pictures_failed: set[str] = set()
+        self._x_cache: dict[str, dict | None] = {}
+        self._x_pending: set[str] = set()
+        self._shown_row = -1
         self.song: dict | None = None        # title, artist, lines, starts, now
         self.meanings = None
         self.line_map: list[list[int]] = []
@@ -348,8 +357,12 @@ class MeaningsWindow(QWidget):
         self.meaning.document().setDefaultStyleSheet(
             f"a {{ color: {self.accent}; text-decoration: none; }} "
             "blockquote { color: #c9c9da; margin-left: 12px; font-style: italic; }")
-        self.meaning.setHtml(f"<div style='line-height:155%; font-size:{px}px'>{body}</div>")
-        for url in image_urls(body):
+        shown = body
+        for url in self._pictures_failed:          # pictures that wouldn't load: offer a link instead
+            shown = shown.replace(f'<img src="{url}">',
+                                  f"<a href='{html.escape(url)}'>🖼 Open picture</a>")
+        self.meaning.setHtml(f"<div style='line-height:155%; font-size:{px}px'>{shown}</div>")
+        for url in image_urls(shown):
             if url not in self._pictures and url not in self._pictures_pending:
                 self._fetch_picture(url)
 
@@ -358,9 +371,9 @@ class MeaningsWindow(QWidget):
 
         def work():
             try:
-                r = urllib.request.Request(url, headers={"User-Agent": "SpotifyLyricsOverlay"})
+                r = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA, "Accept": "image/*"})
                 with urllib.request.urlopen(r, timeout=15) as resp:
-                    return resp.read(6_000_000)
+                    return resp.read(8_000_000)
             except Exception:
                 return None
         self.pool.submit(work).add_done_callback(lambda f: self._pic.emit(url, f.result()))
@@ -369,6 +382,10 @@ class MeaningsWindow(QWidget):
         self._pictures_pending.discard(url)
         img = QImage.fromData(data) if data else None
         if img is None or img.isNull():
+            log.info("song meanings: picture didn't load: %s", url)
+            self._pictures_failed.add(url)
+            if url in self._last_body:
+                self._html(self._last_body)
             return
         try:
             view = int(self.meaning.viewport().width())
@@ -601,6 +618,7 @@ class MeaningsWindow(QWidget):
         lines = self.song["lines"] or []
         if i < 0 or i >= len(lines) or not lines[i].strip():
             return
+        self._shown_row = row
         quote = self._quote(lines[i])
         expl = self.meanings.explanations if self.meanings else []
         found = [expl[k] for k in (self.line_map[i] if i < len(self.line_map) else [])]
@@ -623,6 +641,7 @@ class MeaningsWindow(QWidget):
                             "</i></p>")
                 text = (f"<div style='color:#ececf3'>{ex.html}</div>" if ex.html else
                         f"<p style='color:#ececf3'>{html.escape(ex.text).replace(chr(10), '<br>')}</p>")
+                text += "".join(self._x_card(u) for u in x_posts(ex.html or ex.text))
                 parts.append(self._card(f"{frag}{text}"
                                         f"<p style='font-size:12px'>{' &nbsp;·&nbsp; '.join(tags)}</p>"))
             parts.append("<p style='color:#6f6f88; font-size:11px; margin-top:12px'>"
@@ -649,6 +668,46 @@ class MeaningsWindow(QWidget):
         self._html(quote + self._card("<p>Genius hasn't explained this line yet.</p>"
                                       "<p style='color:#9a9ab0'>Turn on the AI backup in Settings → Song meanings to "
                                       "have lines like this explained.</p>"))
+
+    def _x_card(self, url: str) -> str:
+        """A post on X shown as a little card (X doesn't let apps show the post's picture for free)."""
+        open_link = (f"<a href='{html.escape(url.replace('twitter.com', 'x.com'))}'>Open on X ↗</a>")
+        if url not in self._x_cache:
+            if url not in self._x_pending:
+                self._fetch_x(url)
+            inner = f"<p style='color:#9a9ab0'>𝕏 Loading post…</p><p style='font-size:12px'>{open_link}</p>"
+        elif self._x_cache[url] is None:
+            inner = f"<p style='color:#cfcfe0'>𝕏 A post on X</p><p style='font-size:12px'>{open_link}</p>"
+        else:
+            p = self._x_cache[url]
+            pics = "".join(f'<p><img src="{u}"></p>' for u in p.get("pictures") or [])
+            note = (" &nbsp;·&nbsp; <span style='color:#9a9ab0'>🖼 has a picture – open it on X</span>"
+                    if p.get("picture") and not pics else "")
+            text = (f"<p style='color:#e6e6f0'>{html.escape(p['text']).replace(chr(10), '<br>')}</p>"
+                    if p.get("text") else "")
+            inner = (f"<p style='color:#ffffff'><b>𝕏 {html.escape(p['author'])}</b> "
+                     f"<span style='color:#9a9ab0'>@{html.escape(p['handle'])}</span></p>"
+                     f"{text}{pics}<p style='font-size:12px'>{open_link}{note}</p>")
+        return (f"<table width='100%' cellspacing='0' cellpadding='12' bgcolor='#101017' "
+                f"style='margin-top:10px'><tr><td>{inner}</td></tr></table>")
+
+    def _fetch_x(self, url: str):
+        self._x_pending.add(url)
+
+        def work():
+            try:
+                return fetch_x_post(url)
+            except Exception:
+                return None
+        self.pool.submit(work).add_done_callback(lambda f: self._xpost.emit(url, f.result()))
+
+    def _on_x_post(self, url: str, post):
+        self._x_pending.discard(url)
+        self._x_cache[url] = post
+        if self._shown_row >= 0 and url.split("/status/")[-1] in self._last_body:
+            bar = self.meaning.verticalScrollBar().value()
+            self._line_clicked(self._shown_row)
+            self.meaning.verticalScrollBar().setValue(bar)
 
     def _show_ai(self, quote, text):
         self._html(quote + self._card(f"<p style='color:#ececf3'>{html.escape(text).replace(chr(10), '<br>')}</p>"
