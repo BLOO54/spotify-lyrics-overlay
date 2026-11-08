@@ -133,6 +133,84 @@ def fix_stretched(words: list[Heard]) -> list[Heard]:
     return out
 
 
+def _similar(a: str, b: str) -> float:
+    """1 = same word, ~0.6 = close (a misheard ending, a plural), 0 = different."""
+    if a == b:
+        return 1.0
+    if has_cjk(a) or has_cjk(b) or min(len(a), len(b)) < 3:
+        return 0.0
+    if a.startswith(b) or b.startswith(a):
+        return 0.6 if abs(len(a) - len(b)) <= 2 else 0.0
+    from difflib import SequenceMatcher as _SM
+    r = _SM(None, a, b).ratio()
+    return 0.6 if r >= 0.8 else 0.0
+
+
+def align_tokens(lyr: list[str], heard: list[tuple[str, float]], expect: list | None = None,
+                 window: float = 60.0) -> list[tuple[int, int]]:
+    """Line the lyric words up with the heard words over the WHOLE song at once, keeping both in
+    order (like lining up two DNA strands). Unlike "find the longest identical stretch first",
+    a chorus that repeats word for word can't get paired with the wrong repeat. When the
+    website's timing is known, matches near the expected time are preferred.
+    Returns (lyric word index, heard word index) pairs."""
+    n, m = len(lyr), len(heard)
+    if not n or not m:
+        return []
+    GAP_L, GAP_H = -0.35, -0.25           # skipping a lyric word / a heard word
+    neg = float("-inf")
+    # score[i][j]: best score lining up lyr[:i] with heard[:j]; move: 0 diag, 1 skip lyric, 2 skip heard
+    prev = [GAP_H * j for j in range(m + 1)]
+    moves = [bytearray(m + 1) for _ in range(n + 1)]
+    for j in range(1, m + 1):
+        moves[0][j] = 2
+    for i in range(1, n + 1):
+        cur = [0.0] * (m + 1)
+        cur[0] = GAP_L * i
+        mv = moves[i]
+        mv[0] = 1
+        w = lyr[i - 1]
+        e = expect[i - 1] if expect else None
+        for j in range(1, m + 1):
+            best, how = prev[j] + GAP_L, 1
+            alt = cur[j - 1] + GAP_H
+            if alt > best:
+                best, how = alt, 2
+            hw, ht_ = heard[j - 1]
+            sim = 1.0 if hw == w else (_similar(w, hw) if hw[:1] == w[:1] or len(w) > 4 else 0.0)
+            if sim > 0:
+                score = 2.0 * sim
+                if e is not None:
+                    dt = abs(ht_ - e)
+                    score = neg if dt > window else score - 0.8 * min(dt / window, 1.0)
+                alt = prev[j - 1] + score
+                if alt > best:
+                    best, how = alt, 0
+            cur[j] = best
+            mv[j] = how
+        prev = cur
+    pairs = []
+    i, j = n, m
+    while i > 0 and j > 0:
+        how = moves[i][j]
+        if how == 0:
+            pairs.append((i - 1, j - 1))
+            i, j = i - 1, j - 1
+        elif how == 1:
+            i -= 1
+        else:
+            j -= 1
+    pairs.reverse()
+    # a lone match of a short word with nothing matched around it is usually an accident
+    keep = []
+    matched = {a for a, _ in pairs}
+    for a, b in pairs:
+        lone = (a - 1 not in matched) and (a + 1 not in matched)
+        if lone and (len(lyr[a]) < 4 or has_cjk(lyr[a])):
+            continue
+        keep.append((a, b))
+    return keep
+
+
 @dataclass
 class AlignResult:
     starts: list            # new start time for every line (None for empty lines without a time)
@@ -142,6 +220,7 @@ class AlignResult:
     lyric_lines: int
     coverage: float         # share of lyric words the AI heard
     heard: list = field(default_factory=list)   # per line: True = the AI heard it, False = timing was filled in
+    words: list = field(default_factory=list)   # what the AI heard: (word, start, end) - kept so it can re-match
 
     @property
     def quality(self) -> float:
@@ -166,15 +245,16 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
     ht = heard_tokens(fix_stretched(heard))
     hear = [t for t, _, _ in ht]
 
+    # when each lyric word is expected (from the website's timing), to prefer nearby matches
+    expect: list = [None] * len(lyr)
+    if orig_starts is not None:
+        for i in range(n):
+            if i < len(orig_starts) and orig_starts[i] is not None:
+                for k, t in enumerate(line_tok[i]):
+                    expect[t] = orig_starts[i] + 0.3 * k
     anchors: dict[int, tuple[float, float]] = {}
-    sm = SequenceMatcher(None, lyr, hear, autojunk=False)
-    for a, b, size in sm.get_matching_blocks():
-        if size == 0:
-            continue
-        if size == 1 and (len(lyr[a]) < 4 or has_cjk(lyr[a])):
-            continue          # a lone short word ("the", one kana) matches by accident too often
-        for k in range(size):
-            anchors[a + k] = (ht[b + k][1], ht[b + k][2])
+    for a, b in align_tokens(lyr, [(t, s_) for t, s_, _ in ht], expect):
+        anchors[a] = (ht[b][1], ht[b][2])
 
     starts: list = [None] * n
     ends: list = [None] * n
@@ -242,7 +322,8 @@ def align(lines: list[str], heard: list[Heard], orig_starts: list | None = None,
     word_times = [_line_word_times(lines[i], starts[i], _next_start(starts, i), words_t[i])
                   if words_t[i] else None for i in range(n)]
     coverage = len(anchors) / max(len(lyr), 1)
-    return AlignResult(starts, word_times, ends, matched, lyric_lines, coverage, heard_flags)
+    return AlignResult(starts, word_times, ends, matched, lyric_lines, coverage, heard_flags,
+                       [(w.text, round(w.start, 2), round(w.end, 2)) for w in heard])
 
 
 def _next_start(starts, i):
@@ -349,15 +430,29 @@ def _line_word_times(text: str, start, next_start, heard: dict):
     return out
 
 
+def rematch(lrc_path: Path, title: str, artist: str) -> tuple[str | None, AlignResult | None, str]:
+    """Match the words the AI heard to the lyrics again (e.g. after the app got better at it),
+    without listening to the song again."""
+    d = load_details(lrc_path)
+    if not d or not d.get("words"):
+        return None, None, "this song has no saved words - play it once more with AI sync on"
+    heard = [Heard(w[0], float(w[1]), float(w[2])) for w in d["words"]]
+    res = align(d["lines"], heard, d.get("orig"))
+    note = f"AI heard {res.matched_lines}/{res.lyric_lines} lines"
+    return to_lrc(d["lines"], res, title, artist, note), res, note
+
+
 def details_path(lrc_path: Path) -> Path:
     return lrc_path.with_suffix(".ai.json")
 
 
-def save_details(lrc_path: Path, lines: list[str], res: AlignResult) -> None:
-    """Next to an AI-synced song: which lines the AI heard and which it had to fill in."""
+def save_details(lrc_path: Path, lines: list[str], res: AlignResult, orig_starts: list | None = None) -> None:
+    """Next to an AI-synced song: which lines the AI heard and which it had to fill in, plus the
+    words it heard (a few KB) so the song can be matched again later without listening again."""
     try:
         data = {"lines": [ln for ln in lines], "heard": [bool(h) for h in res.heard],
-                "matched": res.matched_lines, "total": res.lyric_lines}
+                "matched": res.matched_lines, "total": res.lyric_lines,
+                "words": [list(w) for w in res.words], "orig": orig_starts}
         details_path(lrc_path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         log.exception("could not save AI sync details")
@@ -711,7 +806,7 @@ def transcribe(model_dir: Path, audio, language: str | None = None, prompt: str 
         segments, info = model.transcribe(
             audio, language=language, word_timestamps=True, vad_filter=False,
             condition_on_previous_text=False, initial_prompt=prompt, beam_size=5,
-            no_speech_threshold=0.45)
+            no_speech_threshold=None)      # never skip a part just because the music is louder than the voice
         words: list[Heard] = []
         total = max(len(audio) / SAMPLE_RATE, 0.1)
         for seg in segments:
@@ -849,7 +944,8 @@ def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple
     if loud < 1e-4:
         return None, None, "the recording was silent (is Spotify playing on a different sound device?)"
     heard.sort(key=lambda w: w.start)
-    log.info("AI heard %d words in %s", len(heard), job.title)
+    log.info("AI heard %d words in %s (from %.0f s to %.0f s)", len(heard), job.title,
+             heard[0].start if heard else 0, heard[-1].end if heard else 0)
     res = align(job.lines, heard, job.orig_starts)
     need = 0.3 if job.orig_starts else 0.55
     if res.quality < need:

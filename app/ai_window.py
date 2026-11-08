@@ -150,6 +150,12 @@ class AiSyncWindow(QWidget):
         self.lines = QTextBrowser()
         self.lines.setObjectName("lines")
         ll.addWidget(self.lines, 1)
+        self.rematch_btn = QPushButton("Re-match (no listening needed)")
+        self.rematch_btn.setToolTip("Match the words the AI heard to the lyrics again, using the app's newest "
+                                    "matching. Useful after an update.")
+        self.rematch_btn.setVisible(False)
+        self.rematch_btn.clicked.connect(self._rematch)
+        ll.addWidget(self.rematch_btn, 0, Qt.AlignmentFlag.AlignLeft)
         bottom.addWidget(songs_card, 2)
         bottom.addWidget(lines_card, 3)
         root.addLayout(bottom, 1)
@@ -310,12 +316,25 @@ class AiSyncWindow(QWidget):
             self.songs.addItem(QListWidgetItem("No songs yet – play a song to the end with AI sync on."))
         self.songs.blockSignals(False)
 
+    def _rematch(self):
+        e = getattr(self, "_picked", None)
+        if e and e.get("path"):
+            self.ctl.ai_rematch(e["path"], e["title"], e.get("artist") or "")
+            self._songs_key = None
+            self.refresh()
+            for k, x in enumerate(getattr(self, "_entries", [])):
+                if x.get("path") == e["path"]:
+                    self.songs.setCurrentRow(k)
+                    self._song_picked(k)
+
     def _song_picked(self, row: int):
         entries = getattr(self, "_entries", [])
         if not (0 <= row < len(entries)):
             return
         e = entries[row]
         d = e.get("details")
+        self._picked = e
+        self.rematch_btn.setVisible(bool(not e.get("failed") and d and d.get("words") and e.get("path")))
         head = (f"<p style='font-size:16px; font-weight:600; color:#ffffff'>{html.escape(e['title'])}</p>"
                 f"<p style='color:#9a9ab0'>{html.escape(e.get('note') or '')}</p>")
         if not d or not d.get("lines"):

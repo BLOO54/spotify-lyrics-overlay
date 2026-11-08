@@ -990,7 +990,7 @@ class Controller(QObject):
             return
         saved = self.ai_lyrics.save(job.title, job.artist, text)
         if res is not None:
-            ai_sync.save_details(saved, job.lines, res)
+            ai_sync.save_details(saved, job.lines, res, job.orig_starts)
         self._recent_ai.insert(0, {"title": job.title, "artist": job.artist, "ok": True, "message": msg,
                                    "path": str(saved)})
         self._refresh_synced()
@@ -999,6 +999,22 @@ class Controller(QObject):
                     keep=True)
         if self.track and self.track.title == job.title and self.track.artist == job.artist:
             self._fetch(self.track)        # same song still (or again) playing: switch now
+
+    def ai_rematch(self, path: str, title: str, artist: str):
+        """Match an AI-synced song again from the words it heard (no listening needed)."""
+        p = Path(path)
+        text, res, msg = ai_sync.rematch(p, title, artist)
+        if not text:
+            self.notify(f"Couldn't re-match “{title}”: {msg}.", "info", 5000)
+            return
+        p.write_text(text, encoding="utf-8")
+        d = ai_sync.load_details(p) or {}
+        ai_sync.save_details(p, d.get("lines") or [], res, d.get("orig"))
+        self.notify(f"Re-matched “{title}” ({msg}).", "success", 4000, keep=True)
+        if self.track and self.track.title == title:
+            self._fetch(self.track)
+        self._refresh_synced()
+        self._refresh_ai_window()
 
     def ai_redo_song(self):
         if not (self.track and self.track.title):

@@ -254,3 +254,63 @@ def test_chorus_matched_to_wrong_repeat_is_still_rejected():
             heard.append(Heard(w, truth[i] + 0.3 * j, truth[i] + 0.3 * j + 0.2))
     res = align(lines, heard, list(truth))
     assert abs(res.starts[1] - 10.0) < 0.05 and abs(res.starts[4] - 40.0) < 1.0
+
+
+def _chorus_song():
+    chorus = ["But I falter on the forethought", "I keep on running like a chicken with its head cut off",
+              "A birdbrain baby I don't know when I'm supposed to stop", "Hit me with the flap down",
+              "I put my neck up on the chopping block", "A birdbrain baby I don't think my head is coming off",
+              "Baby I don't know when I'm supposed to stop", "Baby I don't know when I'm supposed to stop"]
+    verse1 = ["So unsure before it's even heard", "Never confident in a single word"]
+    verse2 = ["This bird constantly overturned", "Ten time unwitting champion of being spurned"]
+    bridge = ["Is it all for a show", "In the golden hour you seem to know no fear"]
+    lines = verse1 + chorus + verse2 + chorus + bridge + chorus
+    truth, t = [], 5.0
+    for ln in lines:
+        truth.append(t)
+        t += 0.3 * len(ln.split()) + 1.0
+    return lines, truth
+
+
+def test_repeated_choruses_all_matched():
+    """BIRDBRAIN again: the chorus repeats word for word three times. The AI hears every chorus,
+    but some words are misheard and it adds a few words that aren't sung."""
+    lines, truth = _chorus_song()
+    rnd = random.Random(7)
+    heard = []
+    for i, (ln, t) in enumerate(zip(lines, truth)):
+        for j, w in enumerate(ln.split()):
+            if rnd.random() < 0.12:
+                continue                                   # missed word
+            word = w if rnd.random() > 0.08 else w + "s"   # misheard word
+            heard.append(Heard(word, t + 0.3 * j, t + 0.3 * j + 0.25))
+        if i % 5 == 0:
+            heard.append(Heard("yeah", t + 0.3 * len(ln.split()), t + 0.3 * len(ln.split()) + 0.2))
+    orig = [x + 0.8 for x in truth]                        # the website's timing is a little off
+    res = align(lines, heard, orig)
+    assert res.matched_lines >= len(lines) - 2, (res.matched_lines, len(lines),
+                                                 [lines[i] for i in range(len(lines)) if not res.heard[i]])
+    assert max(abs(a - b) for a, b in zip(res.starts, truth)) < 1.0
+
+
+def test_repeated_choruses_without_website_timing():
+    lines, truth = _chorus_song()
+    heard = [Heard(w, t + 0.3 * j, t + 0.3 * j + 0.25) for ln, t in zip(lines, truth)
+             for j, w in enumerate(ln.split())]
+    res = align(lines, heard, None)
+    assert res.matched_lines == len(lines)
+
+
+def test_rematch_from_saved_words(tmp_path):
+    from app.ai_sync import load_details, rematch, save_details
+    lines, truth = _chorus_song()
+    heard = [Heard(w, t + 0.3 * j, t + 0.3 * j + 0.25) for ln, t in zip(lines, truth)
+             for j, w in enumerate(ln.split())]
+    res = align(lines, heard, [x + 0.5 for x in truth])
+    lrc = tmp_path / "Jamie Paige - BIRDBRAIN.lrc"
+    lrc.write_text("x", encoding="utf-8")
+    save_details(lrc, lines, res, [x + 0.5 for x in truth])
+    assert len(load_details(lrc)["words"]) == len(heard)
+    text, res2, note = rematch(lrc, "BIRDBRAIN", "Jamie Paige")
+    assert text and res2.matched_lines == len(lines) and note == f"AI heard {len(lines)}/{len(lines)} lines"
+    assert rematch(tmp_path / "missing.lrc", "x", "y")[0] is None
