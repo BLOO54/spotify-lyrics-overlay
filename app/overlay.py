@@ -321,7 +321,18 @@ class OverlayWindow(QWidget):
         return 0.5 if self._one_row() else 0.55
 
     def _fit_tokens(self, f: QFont, tokens, avail: float, max_rows: int):
-        """Pick a font size so the text fits in max_rows rows; returns (font, rows, widths, gaps)."""
+        """Pick a font size so the text fits in max_rows rows; returns (font, rows, widths, gaps).
+        Remembered: the same line is drawn ~60 times a second."""
+        key = (f.key(), tuple(tokens), round(avail, 1), max_rows, self._floor_ratio())
+        memo = self.__dict__.setdefault("_fit_memo", {})
+        if key in memo:
+            return memo[key]
+        if len(memo) > 200:
+            memo.clear()
+        memo[key] = out = self._fit_tokens_now(f, tokens, avail, max_rows)
+        return out
+
+    def _fit_tokens_now(self, f: QFont, tokens, avail: float, max_rows: int):
         size = f.pixelSize()
         floor = max(8, int(size * self._floor_ratio()))
         while True:
@@ -1285,25 +1296,36 @@ class OverlayWindow(QWidget):
                 else:
                     self._draw_text(p, path, text_c, oa)
 
+    @staticmethod
+    def _wipe_gradient(grad: QLinearGradient, x: float, w: float, edge: float, feather: float):
+        """The word's colour gradient, fully shown up to `edge`, fading out over `feather` pixels after it."""
+        stops = grad.stops()
+        c0, c1 = QColor(stops[0][1]), QColor(stops[-1][1])
+        w = max(w, 1.0)
+        e, f = (edge - x) / w, feather / w
+
+        def colour(u):
+            u = min(max(u, 0.0), 1.0)
+            a = 1.0 if u <= e else (0.0 if u >= e + f else 1.0 - (u - e) / f)
+            c = _mix(c0, c1, u)
+            c.setAlphaF(_clamp01(c.alphaF() * a))
+            return c
+        g = QLinearGradient(x, 0, x + w, 0)
+        last = -1.0
+        for u in sorted({0.0, 1.0, min(max(e, 0.0), 1.0), min(max(e + f, 0.0), 1.0)}):
+            if u > last:
+                g.setColorAt(u, colour(u))
+                last = u
+        return g
+
     def _paint_current_word(self, p, path, grad, style, x, w, base, top, height, fm,
                             prog, since, text_c, hi1, oa):
         if style == "wipe":
             self._draw_text(p, path, text_c, oa, glow=hi1, glow_strength=0.4 + 0.6 * prog)
-            # soft-edged sweep: solid colour up to the edge, then a short fade
+            # soft-edged sweep: solid colour up to the edge, then a smooth fade - one gradient, one fill
             feather = max(6.0, min(22.0, w * 0.35))
             edge = x - feather + (w + feather * 2) * prog
-            p.save()
-            p.setClipRect(QRectF(x - 4, top - 4, max(0.0, edge - x + 4), height + 8))
-            p.fillPath(path, QBrush(grad))
-            p.restore()
-            steps = 6
-            for k in range(steps):
-                x0 = edge + feather * k / steps
-                p.save()
-                p.setOpacity(1.0 - (k + 1) / (steps + 1))
-                p.setClipRect(QRectF(x0, top - 4, feather / steps + 0.5, height + 8))
-                p.fillPath(path, QBrush(grad))
-                p.restore()
+            p.fillPath(path, QBrush(self._wipe_gradient(grad, x, w, edge, feather)))
         elif style == "word":
             pop = _clamp01(since / 0.12)
             self._draw_text(p, path, _mix(text_c, hi1, pop), oa, glow=hi1, glow_strength=pop)

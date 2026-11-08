@@ -155,6 +155,8 @@ jobs:
           if (-not $p.WaitForExit(60000)) { Stop-Process $p -Force; throw "frame test hung" }
           if (-not (Test-Path ci-frame-test.json)) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 30; throw "no frame report" }
           Get-Content ci-frame-test.json
+          $fr = Get-Content ci-frame-test.json -Raw | ConvertFrom-Json
+          if ($fr.paint_errors.Count -gt 0) { throw "drawing errors: $($fr.paint_errors -join '; ')" }
 
       - name: Pictures of the Settings window and a pop-up
         run: |

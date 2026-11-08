@@ -213,9 +213,14 @@ def _schedule_frame_test(app, ctl, out):
     ticks, paints = [], []
     real_paint = type(ov).paintEvent
 
+    errors = []
+
     def timed_paint(e):
         t0 = _t.perf_counter()
-        real_paint(ov, e)
+        try:
+            real_paint(ov, e)
+        except Exception as ex:          # noqa: BLE001 - report drawing errors instead of hiding them
+            errors.append(repr(ex))
         paints.append((_t.perf_counter() - t0) * 1000)
     ov.paintEvent = timed_paint
     real_tick = ctl._tick
@@ -247,6 +252,8 @@ def _schedule_frame_test(app, ctl, out):
         QTimer.singleShot(4000, lambda: (stats(name), then()))
 
     def done():
+        report["paint_errors"] = errors[:5]
+        report["words_with_timing"] = bool(ov.lyrics and ov.lyrics.synced and any(ln.words for ln in ov.lyrics.lines))
         with open(out, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1)
         app.quit()
