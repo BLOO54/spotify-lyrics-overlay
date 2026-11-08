@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.15.2.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.16.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.15.2.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.16.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -198,12 +198,18 @@ have unsynced lyrics online.
 
 ### 💬 Song meanings
 Like Genius, inside the app: Settings → **Song meanings** → **Open song meanings** (or tray → *Song meanings…*).
-Press **Now playing** or search any song, then click a lyric line to read what it means. Lines with a purple
+Press **Now playing** or search any song, then click a lyric line to read what it means. The window
+stays on top of other windows (including Settings) while it's open. Lines with a purple
 background have an explanation on Genius; **Follow the song** highlights the line being sung.
 - Needs a free **Genius access token** (once): sign in at genius.com/api-clients → *New API Client* →
   *Generate Access Token* → paste it in Settings → Song meanings. Without one you can still search and read lyrics.
 - **AI backup** (optional, off by default): lines Genius hasn't explained are explained by Claude using your own
   Anthropic API key (a fraction of a cent per line, only when you click one; answers are remembered).
+
+### ⏱ Synced songs
+Settings → **Synced songs** lists every song you synced yourself or AI sync timed, newest first. Filter by who
+synced it or by name, and press **Remove** on any you don't like - the song goes back to the normal timing (AI
+sync learns it again next time it plays to the end).
 
 ### 🔔 Notifications
 Settings → **Notifications** lists past pop-ups worth looking back at: songs AI sync finished (or couldn't

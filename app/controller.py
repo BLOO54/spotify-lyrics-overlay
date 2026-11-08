@@ -438,6 +438,8 @@ class Controller(QObject):
             self.settings_dlg.ai_status_wanted.connect(self._refresh_ai_status)
             self.settings_dlg.history_clear_requested.connect(self._clear_history)
             self.settings_dlg.meanings_requested.connect(self.open_meanings)
+            self.settings_dlg.synced_wanted.connect(self._refresh_synced)
+            self.settings_dlg.synced_remove_requested.connect(self.remove_synced)
             self.settings_dlg.show_history(self.history.newest_first())
             self._show_update_status()
         self.settings_dlg.show()
@@ -508,6 +510,7 @@ class Controller(QObject):
     def _tap_saved(self, title: str, artist: str, text: str):
         path = self.my_lyrics.save(title, artist, text)
         log.info("Saved your timing to %s", path)
+        self._refresh_synced()
         if not self.s.use_my_files:           # you just synced it, so you want to see it
             self.s.use_my_files = True
             self.s.save()
@@ -923,6 +926,7 @@ class Controller(QObject):
             self.notify(f"AI sync: “{job.title}” – {msg}.", "info", 5000, keep=True)
             return
         self.ai_lyrics.save(job.title, job.artist, text)
+        self._refresh_synced()
         self.notify(f"AI synced “{job.title}” ({msg}). It uses the new timing from now on.", "success", 5000,
                     keep=True)
         if self.track and self.track.title == job.title and self.track.artist == job.artist:
@@ -1041,6 +1045,33 @@ class Controller(QObject):
         else:
             lines, starts = None, None
         return {"title": self.track.title, "artist": self.track.artist, "lines": lines, "starts": starts}
+
+    # ------------------------------------------------------------ synced songs
+    def _refresh_synced(self):
+        if self.settings_dlg is None:
+            return
+        from .my_lyrics import list_synced
+        self.settings_dlg.set_synced_songs(list_synced(self.my_lyrics.folder, "mine")
+                                           + list_synced(self.ai_lyrics.folder, "ai"))
+
+    def remove_synced(self, kind: str, path: str):
+        p = Path(path)
+        folder = self.my_lyrics.folder if kind == "mine" else self.ai_lyrics.folder
+        try:
+            if p.resolve().parent != folder.resolve() or p.suffix.lower() != ".lrc":
+                raise ValueError("not a synced-song file")
+            p.unlink()
+        except Exception as e:
+            log.warning("could not remove %s: %s", path, e)
+            self.notify(f"Couldn't remove that file ({e}).", "warning", 4000)
+            self._refresh_synced()
+            return
+        name = p.stem.split(" - ", 1)[-1]
+        self.notify(f"Removed the {'AI' if kind == 'ai' else 'your'} timing for “{name}”. "
+                    "It uses the normal timing now.", "info", 4000, keep=True)
+        if self.track and self.track.title:
+            self._fetch(self.track)          # if it was this song, switch right away
+        self._refresh_synced()
 
     def _clear_history(self):
         self.history.clear()

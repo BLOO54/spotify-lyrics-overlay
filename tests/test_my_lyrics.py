@@ -82,3 +82,14 @@ def test_untimed_lines_are_left_out_and_order_kept():
     s = TapSession(["a", "b", "c"], times=[None, 7.0, 2.0])
     starts = [(round(l.start, 1), l.text) for l in lrc.parse_lrc(s.to_lrc("T", "A"))]
     assert starts[:2] == [(2.0, "c"), (7.0, "b")]
+
+
+def test_list_synced(tmp_path):
+    from app.my_lyrics import list_synced
+    (tmp_path / "Jamie Paige - birdbrain.lrc").write_text("[ti:birdbrain]\n[ar:Jamie Paige]\n[00:01.00]hi\n",
+                                                          encoding="utf-8")
+    (tmp_path / "Someone - Song.lrc").write_text("[#:AI heard 30/34 lines]\n[00:01.00]x\n", encoding="utf-8")
+    (tmp_path / "README.txt").write_text("x")
+    got = list_synced(tmp_path, "ai")
+    assert [(g["title"], g["artist"]) for g in got] == [("birdbrain", "Jamie Paige"), ("Song", "Someone")]
+    assert got[1]["note"] == "AI heard 30/34 lines" and got[0]["kind"] == "ai" and got[0]["modified"]

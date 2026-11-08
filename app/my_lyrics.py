@@ -188,3 +188,39 @@ def lines_for_tapping(synced: str | None, plain: str | None) -> list[str]:
     elif plain:
         lines = [re.sub(r"\s+", " ", ln).strip() for ln in plain.splitlines() if ln.strip()]
     return lines
+
+
+def list_synced(folder: Path, kind: str) -> list[dict]:
+    """Every .lrc file in a folder, with the song name, when it was made and any AI note."""
+    from datetime import datetime
+    out = []
+    try:
+        files = sorted(folder.glob("*.lrc"))
+    except OSError:
+        return out
+    for f in files:
+        title = artist = note = ""
+        try:
+            head = f.read_text(encoding="utf-8-sig", errors="replace")[:2000]
+        except OSError:
+            continue
+        for line in head.splitlines():
+            m = re.match(r"^\[(ti|ar|#):(.*)\]\s*$", line.strip())
+            if m:
+                key, val = m.group(1), m.group(2).strip()
+                if key == "ti":
+                    title = val
+                elif key == "ar":
+                    artist = val
+                else:
+                    note = val
+        if not title:
+            stem = f.stem
+            artist, title = (stem.split(" - ", 1) if " - " in stem else ("", stem))
+        try:
+            when = datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            when = ""
+        out.append({"kind": kind, "path": str(f), "title": title, "artist": artist,
+                    "modified": when, "note": note})
+    return out

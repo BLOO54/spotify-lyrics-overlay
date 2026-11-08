@@ -55,6 +55,14 @@ QProgressBar { background: #1b1b24; border: 1px solid #2a2a36; border-radius: 6p
                text-align: center; color: transparent; }
 QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c3aed, stop:1 #a78bfa);
                       border-radius: 5px; }
+QListWidget#synced { background: #14141b; border: 1px solid #24242f; border-radius: 8px; padding: 6px; }
+QListWidget#synced::item { border-bottom: 1px solid #22222c; }
+QLabel#badgeMine { background: #1e3a2f; color: #6ee7b7; border-radius: 9px; padding: 2px 9px; font-size: 11px; }
+QLabel#badgeAi { background: #2e2350; color: #c4b5fd; border-radius: 9px; padding: 2px 9px; font-size: 11px; }
+QLabel#rowTitle { font-size: 14px; font-weight: 600; color: #ececf3; background: transparent; }
+QLabel#rowSub { font-size: 12px; color: #8a8aa3; background: transparent; }
+QPushButton#danger { background: #2a1a1f; color: #fca5a5; border: 1px solid #4a2a33; }
+QPushButton#danger:hover { background: #3a1f27; }
 QListWidget#history { background: #14141b; border: 1px solid #24242f; border-radius: 8px; padding: 6px;
                       color: #e6e6f0; }
 QListWidget#history::item { padding: 10px 8px; border-bottom: 1px solid #22222c; }
@@ -213,6 +221,8 @@ class SettingsDialog(QDialog):
     ai_status_wanted = Signal()
     history_clear_requested = Signal()
     meanings_requested = Signal()
+    synced_wanted = Signal()
+    synced_remove_requested = Signal(str, str)      # kind ("mine" / "ai"), file path
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -278,9 +288,10 @@ class SettingsDialog(QDialog):
             ("Shortcuts", "Keys that work even in games", self._shortcuts_tab()),
             ("Song meanings", "What the lyrics mean – from Genius, with an optional AI backup",
              self._meanings_tab()),
+            ("Synced songs", "Songs you or AI sync have timed – remove any you don't like", self._synced_tab()),
             ("Notifications", "Past pop-ups: songs synced, model downloads and saved timing", self._history_tab()),
         ]
-        icons = ["◐", "▦", "♫", "⚙", "⌨", "💬", "🔔"]
+        icons = ["◐", "▦", "♫", "⚙", "⌨", "💬", "⏱", "🔔"]
         self._pages = pages
         for (name, sub, widget), icon in zip(pages, icons):
             self.nav.addItem(QListWidgetItem(f"{icon}   {name}"))
@@ -341,6 +352,7 @@ class SettingsDialog(QDialog):
     def showEvent(self, e):
         super().showEvent(e)
         self.ai_status_wanted.emit()
+        self.synced_wanted.emit()
         try:
             from . import win32
             win32.set_dark_titlebar(int(self.winId()))
@@ -745,6 +757,96 @@ class SettingsDialog(QDialog):
                        "when you click a line Genius hasn't explained, and is remembered so the same line is never "
                        "paid for twice. Answers are in the language picked under Translation."))
         return w
+
+    def _synced_tab(self):
+        w, f = self._page()
+        top = QHBoxLayout()
+        self.synced_filter = QComboBox()
+        self.synced_filter.addItem("All synced songs", "all")
+        self.synced_filter.addItem("Synced by me", "mine")
+        self.synced_filter.addItem("Synced by AI", "ai")
+        self.synced_filter.currentIndexChanged.connect(lambda _: self._fill_synced())
+        self.synced_search = QLineEdit()
+        self.synced_search.setPlaceholderText("Filter by song or artist…")
+        self.synced_search.textChanged.connect(lambda _: self._fill_synced())
+        top.addWidget(self.synced_filter)
+        top.addWidget(self.synced_search, 1)
+        holder = QWidget()
+        holder.setLayout(top)
+        f.addRow(holder)
+        self.synced_list = QListWidget()
+        self.synced_list.setObjectName("synced")
+        self.synced_list.setMinimumHeight(340)
+        self.synced_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.synced_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        f.addRow(self.synced_list)
+        self.synced_count = QLabel("")
+        self.synced_count.setStyleSheet("color:#7f7f98;")
+        f.addRow(self.synced_count)
+        f.addRow(_hint("Removing a song deletes only its timing file – the song goes back to the normal lyrics "
+                       "timing. AI sync will learn it again the next time it plays to the end (if AI sync is on); "
+                       "songs you synced yourself can be synced again from the tray menu."))
+        self._synced_entries = []
+        return w
+
+    def set_synced_songs(self, entries: list):
+        self._synced_entries = entries
+        self._fill_synced()
+
+    def _fill_synced(self):
+        from .history import when_text
+        want = self.synced_filter.currentData() or "all"
+        q = self.synced_search.text().strip().lower()
+        self.synced_list.clear()
+        shown = 0
+        for e in sorted(self._synced_entries, key=lambda e: e.get("modified", ""), reverse=True):
+            if want != "all" and e["kind"] != want:
+                continue
+            if q and q not in f"{e['title']} {e['artist']}".lower():
+                continue
+            shown += 1
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(8, 8, 8, 8)
+            h.setSpacing(12)
+            badge = QLabel("Synced by me" if e["kind"] == "mine" else "AI synced")
+            badge.setObjectName("badgeMine" if e["kind"] == "mine" else "badgeAi")
+            texts = QVBoxLayout()
+            texts.setSpacing(2)
+            t = QLabel(e["title"] or "(untitled)")
+            t.setObjectName("rowTitle")
+            sub_bits = [b for b in (e.get("artist"), when_text(e["modified"]) if e.get("modified") else "",
+                                    e.get("note")) if b]
+            s_ = QLabel("  ·  ".join(sub_bits))
+            s_.setObjectName("rowSub")
+            texts.addWidget(t)
+            texts.addWidget(s_)
+            rm = QPushButton("Remove")
+            rm.setObjectName("danger")
+            rm.clicked.connect(lambda _=False, e=e: self._confirm_remove(e))
+            h.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
+            h.addLayout(texts, 1)
+            h.addWidget(rm, 0, Qt.AlignmentFlag.AlignVCenter)
+            item = QListWidgetItem()
+            item.setSizeHint(row.sizeHint())
+            self.synced_list.addItem(item)
+            self.synced_list.setItemWidget(item, row)
+        if not shown:
+            self.synced_list.addItem(QListWidgetItem("No synced songs yet." if not self._synced_entries
+                                                     else "No songs match."))
+        mine = sum(1 for e in self._synced_entries if e["kind"] == "mine")
+        ai = len(self._synced_entries) - mine
+        self.synced_count.setText(f"{mine} synced by you · {ai} synced by AI")
+
+    def _confirm_remove(self, e: dict):
+        who = "your own timing" if e["kind"] == "mine" else "the AI timing"
+        ans = QMessageBox.question(
+            self, "Remove synced song",
+            f"Remove {who} for “{e['title']}”?\n\nThe song goes back to the normal lyrics timing.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if ans == QMessageBox.StandardButton.Yes:
+            self.synced_remove_requested.emit(e["kind"], e["path"])
 
     def _history_tab(self):
         w, f = self._page()

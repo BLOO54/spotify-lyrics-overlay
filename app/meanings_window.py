@@ -5,136 +5,259 @@ from __future__ import annotations
 
 import html
 import logging
+import re
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
-                               QSplitter, QStackedWidget, QStyledItemDelegate, QTextBrowser, QVBoxLayout,
-                               QWidget, QCheckBox)
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPixmap
+from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QPushButton, QStackedWidget, QStyle, QStyledItemDelegate, QTextBrowser, QVBoxLayout,
+                               QWidget)
 
 from .meanings import AiExplainer, GeniusClient, MeaningsError, SongHit, line_explanations
 from .settings_dialog import STYLE
 
 log = logging.getLogger(__name__)
 
-EXTRA_STYLE = """
-QWidget#meaningsRoot { background: #0f0f15; color: #ececf3; }
-QWidget#meaningsRoot QLabel, QWidget#meaningsRoot QCheckBox { background: transparent; }
-QListWidget#lyrics, QListWidget#results { background: #121219; border: 1px solid #23232e; border-radius: 10px;
-    padding: 8px; color: #d9d9e6; font-size: 15px; outline: none; }
-QListWidget#lyrics::item, QListWidget#results::item { padding: 7px 10px; border-radius: 7px; }
-QListWidget#lyrics::item:selected, QListWidget#results::item:selected { background: #3b2a6b; color: #ffffff; }
-QListWidget#lyrics::item:hover, QListWidget#results::item:hover { background: #1f1f2b; }
-QTextBrowser#meaning { background: #15151d; border: 1px solid #23232e; border-radius: 10px; padding: 14px;
-    color: #e6e6f0; font-size: 14px; }
-QSplitter::handle { background: transparent; width: 8px; }
-QLabel#songTitle { font-size: 20px; font-weight: 600; }
-QLabel#songArtist { color: #9a9ab0; font-size: 13px; }
-QLabel#credit { color: #6f6f88; font-size: 11px; }
+DEFAULT_ACCENT = "#8b5cf6"
+EXPLAINED = Qt.ItemDataRole.UserRole + 1
+SINGING = Qt.ItemDataRole.UserRole + 2
+
+
+def _style(accent: str) -> str:
+    a = QColor(accent)
+    h = accent.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4)) if len(h) == 6 else (139, 92, 246)
+    rgba = f"rgba({r},{g},{b},0.35)"
+    return STYLE + f"""
+QWidget#meaningsRoot {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #11101a, stop:1 #0b0b10);
+    color: #ececf3; }}
+QWidget#meaningsRoot QLabel, QWidget#meaningsRoot QCheckBox {{ background: transparent; }}
+QLineEdit#searchBox {{ background: #17161f; border: 1px solid #2a2836; border-radius: 19px; padding: 9px 16px;
+    font-size: 14px; color: #ececf3; }}
+QLineEdit#searchBox:focus {{ border: 1px solid {accent}; }}
+QPushButton#pill {{ background: {accent}; color: white; border: none; border-radius: 19px; padding: 9px 18px;
+    font-weight: 600; }}
+QPushButton#pill:hover {{ background: {a.lighter(115).name()}; }}
+QPushButton#ghost {{ background: #1b1a24; color: #d6d6e2; border: 1px solid #2a2836; border-radius: 19px;
+    padding: 9px 16px; }}
+QFrame#hero {{ border-radius: 18px; border: 1px solid #262433;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {rgba}, stop:0.65 #14131c, stop:1 #111018); }}
+QLabel#kicker {{ color: {a.lighter(140).name()}; font-size: 11px; font-weight: 700; letter-spacing: 2px; }}
+QLabel#heroTitle {{ font-size: 26px; font-weight: 700; color: #ffffff; }}
+QLabel#heroArtist {{ font-size: 14px; color: #b5b5c8; }}
+QLabel#chip {{ background: #1f1d2a; color: #cfcfe0; border: 1px solid #2c2a3a; border-radius: 10px;
+    padding: 3px 10px; font-size: 11px; }}
+QLabel#chipAccent {{ background: {rgba}; color: #ffffff; border-radius: 10px; padding: 3px 10px; font-size: 11px; }}
+QFrame#card {{ background: #13121a; border: 1px solid #23212e; border-radius: 18px; }}
+QListWidget#lyrics, QListWidget#results {{ background: transparent; border: none; color: #cfcfdc;
+    font-size: 16px; outline: none; padding: 6px; }}
+QListWidget#lyrics::item, QListWidget#results::item {{ padding: 8px 14px; border-radius: 10px; }}
+QListWidget#lyrics::item:hover, QListWidget#results::item:hover {{ background: #1c1b26; }}
+QListWidget#lyrics::item:selected, QListWidget#results::item:selected {{ background: transparent; color: #ffffff; }}
+QTextBrowser#meaning {{ background: transparent; border: none; color: #e6e6f0; font-size: 14px; }}
+QLabel#credit {{ color: #6f6f88; font-size: 11px; }}
 """
 
-MARK = QColor("#2a2340")          # background of lines Genius explained
-MARK_BAR = QColor("#8b5cf6")      # the little bar on their left
-NOW = QColor("#c4b5fd")           # the line being sung right now
-EXPLAINED = Qt.ItemDataRole.UserRole + 1
+
+def _rounded(img_bytes: bytes | None, side: int, radius: int = 14) -> QPixmap | None:
+    if not img_bytes:
+        return None
+    img = QImage.fromData(img_bytes)
+    if img.isNull():
+        return None
+    src = QPixmap.fromImage(img).scaled(side, side, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                         Qt.TransformationMode.SmoothTransformation)
+    out = QPixmap(side, side)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, side, side), radius, radius)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, src)
+    p.end()
+    return out
 
 
-class _MarkDelegate(QStyledItemDelegate):
-    """Paints the purple marking behind explained lines (styled lists ignore item colours)."""
+def _accent_from(img_bytes: bytes | None) -> str:
+    try:
+        from .overlay import OverlayWindow
+        pal = OverlayWindow._palette_from(img_bytes) if img_bytes else None
+        return (pal or {}).get("highlight") or DEFAULT_ACCENT
+    except Exception:
+        return DEFAULT_ACCENT
+
+
+class _LineDelegate(QStyledItemDelegate):
+    """Draws the lyric lines: a soft tint + accent bar for explained lines, a stronger one for the
+    selected line and a glow for the line being sung."""
+
+    def __init__(self, win):
+        super().__init__(win.lyrics)
+        self.win = win
 
     def paint(self, painter: QPainter, option, index):
-        if index.data(EXPLAINED):
-            r = option.rect.adjusted(2, 2, -2, -2)
+        accent = QColor(self.win.accent)
+        r = option.rect.adjusted(3, 2, -3, -2)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        explained = bool(index.data(EXPLAINED))
+        singing = bool(index.data(SINGING))
+        if explained or selected or singing:
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(MARK)
-            painter.drawRoundedRect(r, 7, 7)
-            painter.setBrush(MARK_BAR)
-            painter.drawRoundedRect(r.left(), r.top() + 6, 3, r.height() - 12, 1.5, 1.5)
+            fill = QColor(accent)
+            fill.setAlpha(110 if selected else 70 if singing else 34)
+            painter.setBrush(fill)
+            painter.drawRoundedRect(QRectF(r), 10, 10)
+            if explained:
+                bar = QColor(accent)
+                bar.setAlpha(255 if selected else 200)
+                painter.setBrush(bar)
+                painter.drawRoundedRect(QRectF(r.left() + 1, r.top() + 8, 3, max(4, r.height() - 16)), 1.5, 1.5)
             painter.restore()
         super().paint(painter, option, index)
 
 
 class MeaningsWindow(QWidget):
     _done = Signal(int, str, object)       # request number, what, result (or MeaningsError)
+    _art = Signal(int, object)             # request number, image bytes
 
     def __init__(self, ctl):
         super().__init__(None)
         self.ctl = ctl
         self.s = ctl.s
+        self.accent = DEFAULT_ACCENT
         self.setWindowTitle("Song meanings")
         self.setObjectName("meaningsRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(STYLE + EXTRA_STYLE)
-        self.resize(1060, 720)
-        self.setMinimumSize(780, 520)
-        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="meanings")
+        # stays above other windows (including Settings) while it's open; closing it hides it again
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setStyleSheet(_style(self.accent))
+        self.resize(1100, 760)
+        self.setMinimumSize(820, 560)
+        self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="meanings")
         self._req = 0
+        self._art_req = 0
         self._done.connect(self._on_done)
+        self._art.connect(self._on_art)
         self.song: dict | None = None        # title, artist, lines, starts, now
         self.meanings = None
         self.line_map: list[list[int]] = []
-        self.rows: list[int] = []             # list row -> line index (-1 = gap)
+        self.rows: list[int] = []
         self._now_row = -1
         self._ai_quote = ""
+        self._thumbs: dict[str, QIcon] = {}
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 14)
-        root.setSpacing(12)
+        root.setContentsMargins(22, 18, 22, 14)
+        root.setSpacing(14)
 
+        # ---- search bar
         top = QHBoxLayout()
+        top.setSpacing(10)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search a song or artist…")
+        self.search.setObjectName("searchBox")
+        self.search.setPlaceholderText("🔍   Search any song or artist…")
         self.search.returnPressed.connect(self.do_search)
         go = QPushButton("Search")
+        go.setObjectName("ghost")
         go.clicked.connect(self.do_search)
         self.now_btn = QPushButton("♪  Now playing")
-        self.now_btn.setObjectName("primary")
+        self.now_btn.setObjectName("pill")
         self.now_btn.clicked.connect(self.show_now_playing)
         top.addWidget(self.search, 1)
         top.addWidget(go)
         top.addWidget(self.now_btn)
         root.addLayout(top)
 
-        head = QHBoxLayout()
-        titles = QVBoxLayout()
-        self.title_lbl = QLabel("Song meanings")
-        self.title_lbl.setObjectName("songTitle")
-        self.artist_lbl = QLabel("Search a song, or press Now playing.")
-        self.artist_lbl.setObjectName("songArtist")
-        titles.addWidget(self.title_lbl)
-        titles.addWidget(self.artist_lbl)
-        head.addLayout(titles, 1)
+        # ---- hero: album art, title, artist, chips
+        self.hero = QFrame()
+        self.hero.setObjectName("hero")
+        hl = QHBoxLayout(self.hero)
+        hl.setContentsMargins(18, 16, 18, 16)
+        hl.setSpacing(18)
+        self.art = QLabel()
+        self.art.setFixedSize(96, 96)
+        self.art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.art.setStyleSheet("background:#1d1b28; border-radius:14px; color:#6f6f88; font-size:34px;")
+        self.art.setText("💬")
+        hl.addWidget(self.art)
+        info = QVBoxLayout()
+        info.setSpacing(4)
+        self.kicker = QLabel("SONG MEANINGS")
+        self.kicker.setObjectName("kicker")
+        self.title_lbl = QLabel("What do the lyrics mean?")
+        self.title_lbl.setObjectName("heroTitle")
+        self.artist_lbl = QLabel("Press Now playing, or search any song.")
+        self.artist_lbl.setObjectName("heroArtist")
+        chips = QHBoxLayout()
+        chips.setSpacing(6)
+        self.chip_a = QLabel("")
+        self.chip_a.setObjectName("chipAccent")
+        self.chip_b = QLabel("")
+        self.chip_b.setObjectName("chip")
+        self.chip_a.hide()
+        self.chip_b.hide()
+        chips.addWidget(self.chip_a)
+        chips.addWidget(self.chip_b)
+        chips.addStretch(1)
+        info.addWidget(self.kicker)
+        info.addWidget(self.title_lbl)
+        info.addWidget(self.artist_lbl)
+        info.addLayout(chips)
+        hl.addLayout(info, 1)
         self.follow = QCheckBox("Follow the song")
         self.follow.setChecked(self.s.meanings_follow)
         self.follow.toggled.connect(self._follow_changed)
-        head.addWidget(self.follow, 0, Qt.AlignmentFlag.AlignBottom)
-        root.addLayout(head)
+        self.follow.hide()
+        hl.addWidget(self.follow, 0, Qt.AlignmentFlag.AlignBottom)
+        root.addWidget(self.hero)
 
-        split = QSplitter(Qt.Orientation.Horizontal)
+        # ---- body: lyrics card + meaning card
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        left_card = QFrame()
+        left_card.setObjectName("card")
+        ll = QVBoxLayout(left_card)
+        ll.setContentsMargins(10, 12, 10, 10)
+        self.left_kicker = QLabel("LYRICS")
+        self.left_kicker.setObjectName("kicker")
+        self.left_kicker.setContentsMargins(14, 0, 0, 4)
+        ll.addWidget(self.left_kicker)
         self.left = QStackedWidget()
         self.lyrics = QListWidget()
         self.lyrics.setObjectName("lyrics")
         self.lyrics.setWordWrap(True)
-        self._delegate = _MarkDelegate(self.lyrics)
-        self.lyrics.setItemDelegate(self._delegate)
+        self.lyrics.setItemDelegate(_LineDelegate(self))
         self.lyrics.currentRowChanged.connect(self._line_clicked)
         self.results = QListWidget()
         self.results.setObjectName("results")
+        self.results.setIconSize(QSize(48, 48))
         self.results.itemActivated.connect(self._result_chosen)
         self.results.itemClicked.connect(self._result_chosen)
         self.left.addWidget(self.lyrics)
         self.left.addWidget(self.results)
+        ll.addWidget(self.left, 1)
+
+        right_card = QFrame()
+        right_card.setObjectName("card")
+        rl = QVBoxLayout(right_card)
+        rl.setContentsMargins(22, 14, 22, 14)
+        k2 = QLabel("MEANING")
+        k2.setObjectName("kicker")
+        rl.addWidget(k2)
         self.meaning = QTextBrowser()
         self.meaning.setObjectName("meaning")
         self.meaning.setOpenExternalLinks(True)
-        split.addWidget(self.left)
-        split.addWidget(self.meaning)
-        split.setSizes([560, 480])
-        root.addWidget(split, 1)
+        rl.addWidget(self.meaning, 1)
+        body.addWidget(left_card, 11)
+        body.addWidget(right_card, 10)
+        root.addLayout(body, 1)
 
+        # ---- footer
         foot = QHBoxLayout()
         self.credit = QLabel("Explanations from <a style='color:#a78bfa' href='https://genius.com'>Genius</a> · "
                              "lyrics from LRCLIB")
@@ -196,15 +319,73 @@ class MeaningsWindow(QWidget):
         return req
 
     def _html(self, body: str):
-        self.meaning.setHtml(f"<div style='line-height:150%'>{body}</div>")
+        self.meaning.setHtml(f"<div style='line-height:155%'>{body}</div>")
+
+    def _set_accent(self, colour: str):
+        if colour != self.accent:
+            self.accent = colour
+            self.setStyleSheet(_style(colour))
+            self.lyrics.viewport().update()
+
+    def _set_art(self, img_bytes: bytes | None):
+        pm = _rounded(img_bytes, 96)
+        if pm is None:
+            self.art.setPixmap(QPixmap())
+            self.art.setText("💬")
+            self._set_accent(DEFAULT_ACCENT)
+            return
+        self.art.setText("")
+        self.art.setPixmap(pm)
+        self._set_accent(_accent_from(img_bytes))
+
+    def _load_art(self, url: str):
+        """Download a small cover picture (Genius artwork) in the background."""
+        self._art_req += 1
+        req = self._art_req
+        if not url:
+            return
+
+        def work():
+            try:
+                r = urllib.request.Request(url, headers={"User-Agent": "SpotifyLyricsOverlay"})
+                with urllib.request.urlopen(r, timeout=10) as resp:
+                    return resp.read(3_000_000)
+            except Exception:
+                return None
+        self.pool.submit(work).add_done_callback(lambda f: self._art.emit(req, f.result()))
+
+    def _on_art(self, req, data):
+        if req == self._art_req and data:
+            self._set_art(data)
+
+    def _chips(self, a: str = "", b: str = ""):
+        self.chip_a.setText(a)
+        self.chip_a.setVisible(bool(a))
+        self.chip_b.setText(b)
+        self.chip_b.setVisible(bool(b))
+
+    def _quote(self, text: str) -> str:
+        return (f"<table width='100%' cellspacing='0' cellpadding='0' style='margin:4px 0 14px 0'><tr>"
+                f"<td width='4' bgcolor='{self.accent}'></td><td width='14'></td>"
+                f"<td><span style='font-size:19px; font-weight:600; color:#ffffff'>{html.escape(text)}</span></td>"
+                "</tr></table>")
+
+    def _card(self, inner: str, bg: str = "#1b1926") -> str:
+        return (f"<table width='100%' cellspacing='0' cellpadding='16' bgcolor='{bg}' "
+                f"style='margin-top:10px'><tr><td>{inner}</td></tr></table>")
+
+    def _empty(self, icon: str, title: str, text: str) -> str:
+        return (f"<p align='center' style='margin-top:60px; font-size:40px'>{icon}</p>"
+                f"<p align='center' style='font-size:17px; font-weight:600; color:#ffffff'>{title}</p>"
+                f"<p align='center' style='color:#9a9ab0'>{text}</p>")
 
     def _intro(self):
         need = "" if self.s.genius_token else (
-            "<p style='color:#fbbf24'>To see Genius explanations, add your free Genius access token in "
-            "Settings → Song meanings.</p>")
-        self._html("<h3>How it works</h3><p>Press <b>Now playing</b> for the song you're listening to, or "
-                   "search for any song. Lines with a <span style='background:#2a2340'>&nbsp;purple "
-                   "background&nbsp;</span> have an explanation on Genius – click a line to read it.</p>" + need)
+            "<p align='center' style='color:#fbbf24'>Add your free Genius access token in "
+            "Settings → Song meanings to see explanations.</p>")
+        self._html(self._empty("🎧", "Find out what the lyrics mean",
+                               "Press <b>Now playing</b> for the song you're listening to, or search any song. "
+                               "Highlighted lines have an explanation – click one to read it.") + need)
 
     # ------------------------------------------------------------------ loading songs
     def show_now_playing(self):
@@ -213,6 +394,7 @@ class MeaningsWindow(QWidget):
             self.status.setText("Nothing is playing in Spotify right now.")
             return
         self._load(now["title"], now["artist"], lines=now["lines"], starts=now["starts"], now=True)
+        self._set_art(getattr(self.ctl.overlay, "_art_bytes", None))
 
     def do_search(self):
         q = self.search.text().strip()
@@ -238,17 +420,23 @@ class MeaningsWindow(QWidget):
         hit = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(hit, SongHit):
             self._load(hit.title, hit.artist, hit=hit if hit.genius_id else None)
+            self._set_art(None)
+            if hit.thumb:
+                self._load_art(hit.thumb)
 
     def _load(self, title, artist, lines=None, starts=None, now=False, hit=None):
         self.left.setCurrentWidget(self.lyrics)
+        self.left_kicker.setText("LYRICS")
+        self.kicker.setText("NOW PLAYING" if now else "SONG")
         self.title_lbl.setText(title)
         self.artist_lbl.setText(artist)
+        self._chips("Loading…", "")
         self.lyrics.clear()
         self.rows, self.line_map, self.meanings = [], [], None
         self.song = {"title": title, "artist": artist, "lines": lines, "starts": starts, "now": now}
         self.follow.setVisible(bool(now and starts))
-        self._html("<p style='color:#9a9ab0'>Loading lyrics and explanations…</p>")
-        self.status.setText("Loading…")
+        self._html(self._empty("⏳", "Loading…", "Getting the lyrics and explanations."))
+        self.status.setText("")
         token = bool(self.s.genius_token)
 
         def work():
@@ -258,8 +446,7 @@ class MeaningsWindow(QWidget):
                 from .my_lyrics import lines_for_tapping
                 res = self.ctl.client.fetch(title, artist)
                 if res.synced:
-                    parsed = parse_lrc(res.synced)
-                    ls, st = [p.text for p in parsed], None
+                    ls, st = [p.text for p in parse_lrc(res.synced)], None
                 else:
                     ls = lines_for_tapping(None, res.plain) if res.plain else []
             out = {"lines": ls, "starts": st, "meanings": None, "genius_error": None}
@@ -287,9 +474,10 @@ class MeaningsWindow(QWidget):
         self.rows = []
         explained = 0
         for i, text in enumerate(lines):
-            item = QListWidgetItem(text if text.strip() else " ")
+            item = QListWidgetItem(text if text.strip() else "")
             if not text.strip():
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
+                item.setSizeHint(QSize(10, 14))
             elif self.line_map[i]:
                 item.setData(EXPLAINED, True)
                 explained += 1
@@ -298,29 +486,35 @@ class MeaningsWindow(QWidget):
         self.lyrics.setCurrentRow(-1)
         self.lyrics.blockSignals(False)
         self._now_row = -1
+        total = sum(1 for ln in lines if ln.strip())
+        if self.meanings:
+            self._chips(f"✦ {explained} of {total} lines explained", "Genius")
+            if (not self.song.get("now") or self.art.pixmap() is None or self.art.pixmap().isNull()) \
+                    and self.meanings.hit.thumb:
+                self._load_art(self.meanings.hit.thumb)
+        else:
+            self._chips(f"{total} lines" if total else "", "")
         if not lines:
-            self._html("<p>No lyrics found for this song.</p>")
+            self._html(self._empty("🔇", "No lyrics found", "LRCLIB doesn't have lyrics for this song."))
         else:
             self._show_about(data.get("genius_error"))
-        parts = []
-        if self.meanings:
-            parts.append(f"{explained} of {sum(1 for ln in lines if ln.strip())} lines explained on Genius")
-        elif data.get("genius_error"):
-            parts.append(data["genius_error"])
-        self.status.setText(" · ".join(parts))
+        self.status.setText(data.get("genius_error") or "")
 
     def _show_about(self, genius_error=None):
         m = self.meanings
         bits = []
         if m and m.about:
-            bits.append(f"<h3>About this song</h3><p>{html.escape(m.about).replace(chr(10), '<br>')}</p>")
+            about = html.escape(m.about).replace(chr(10), "<br>")
+            bits.append("<p style='font-size:16px; font-weight:600; color:#ffffff'>About this song</p>"
+                        f"<p style='color:#d6d6e2'>{about}</p>")
         elif m:
             bits.append("<p style='color:#9a9ab0'>Genius has no description for this song.</p>")
         if genius_error:
             bits.append(f"<p style='color:#fbbf24'>{html.escape(genius_error)}</p>")
         if m and m.hit.url:
-            bits.append(f"<p><a style='color:#a78bfa' href='{html.escape(m.hit.url)}'>Open this song on Genius</a></p>")
-        bits.append("<p style='color:#9a9ab0'>Click a line to see what it means.</p>")
+            bits.append(f"<p><a style='color:{self.accent}; text-decoration:none' href='{html.escape(m.hit.url)}'>"
+                        "Open this song on Genius ↗</a></p>")
+        bits.append("<p style='color:#8a8aa3; margin-top:18px'>👈  Click a line to see what it means.</p>")
         self._html("".join(bits))
 
     # ------------------------------------------------------------------ clicking a line
@@ -331,7 +525,7 @@ class MeaningsWindow(QWidget):
         lines = self.song["lines"] or []
         if i < 0 or i >= len(lines) or not lines[i].strip():
             return
-        quote = f"<p style='color:#c4b5fd; font-size:16px'><b>“{html.escape(lines[i])}”</b></p>"
+        quote = self._quote(lines[i])
         expl = self.meanings.explanations if self.meanings else []
         found = [expl[k] for k in (self.line_map[i] if i < len(self.line_map) else [])]
         if found:
@@ -344,18 +538,24 @@ class MeaningsWindow(QWidget):
                     tags.append("<span style='color:#fbbf24'>Unreviewed</span>")
                 if ex.votes:
                     tags.append(f"<span style='color:#9a9ab0'>▲ {ex.votes}</span>")
+                if ex.url:
+                    tags.append(f"<a style='color:{self.accent}; text-decoration:none' "
+                                f"href='{html.escape(ex.url)}'>Genius ↗</a>")
                 frag = ""
                 if _short(ex.fragment) != _short(lines[i]):
-                    frag = f"<p style='color:#9a9ab0'><i>{html.escape(ex.fragment).replace(chr(10), '<br>')}</i></p>"
-                link = (f" · <a style='color:#a78bfa' href='{html.escape(ex.url)}'>on Genius</a>" if ex.url else "")
-                parts.append(f"{frag}<p>{html.escape(ex.text).replace(chr(10), '<br>')}</p>"
-                             f"<p style='font-size:12px'>{' · '.join(tags)}{link}</p><hr>")
-            parts.append("<p style='color:#6f6f88; font-size:11px'>Explanation from Genius contributors.</p>")
+                    frag = (f"<p style='color:#9a9ab0'><i>{html.escape(ex.fragment).replace(chr(10), '<br>')}"
+                            "</i></p>")
+                parts.append(self._card(f"{frag}<p style='color:#ececf3'>"
+                                        f"{html.escape(ex.text).replace(chr(10), '<br>')}</p>"
+                                        f"<p style='font-size:12px'>{' &nbsp;·&nbsp; '.join(tags)}</p>"))
+            parts.append("<p style='color:#6f6f88; font-size:11px; margin-top:12px'>"
+                         "Explanation from Genius contributors.</p>")
             self._html("".join(parts))
             return
         if self.s.meanings_ai and not self.s.anthropic_key.strip():
-            self._html(quote + "<p>Genius hasn't explained this line yet.</p><p style='color:#fbbf24'>Add your "
-                       "Anthropic API key in Settings → Song meanings to have the AI explain it.</p>")
+            self._html(quote + self._card("<p>Genius hasn't explained this line yet.</p><p style='color:#fbbf24'>"
+                                          "Add your Anthropic API key in Settings → Song meanings to have the AI "
+                                          "explain it.</p>"))
             return
         if self.s.meanings_ai:
             ai = self._ai()
@@ -363,20 +563,22 @@ class MeaningsWindow(QWidget):
             if got:
                 self._show_ai(quote, got)
                 return
-            self._html(quote + "<p style='color:#9a9ab0'>Genius hasn't explained this line – asking the AI…</p>")
+            self._html(quote + self._card("<p style='color:#9a9ab0'>✦ Genius hasn't explained this line – "
+                                          "asking the AI…</p>"))
             title, artist, lang = self.song["title"], self.song["artist"], self._language()
             self._ai_quote = quote                  # set before asking, the answer may come back fast
             self._run("ai", lambda: ai.explain(title, artist, lines, i, lang))
             return
-        hint = ("Turn on the AI backup in Settings → Song meanings to have lines like this explained."
-                if not self.s.meanings_ai else "")
-        self._html(quote + "<p>Genius hasn't explained this line yet.</p>"
-                   f"<p style='color:#9a9ab0'>{hint}</p>")
+        self._html(quote + self._card("<p>Genius hasn't explained this line yet.</p>"
+                                      "<p style='color:#9a9ab0'>Turn on the AI backup in Settings → Song meanings to "
+                                      "have lines like this explained.</p>"))
 
     def _show_ai(self, quote, text):
-        self._html(quote + f"<p>{html.escape(text).replace(chr(10), '<br>')}</p>"
-                   "<p style='color:#6f6f88; font-size:11px'>✦ AI explanation (Claude) – Genius hasn't explained "
-                   "this line. It's an interpretation and can be wrong.</p>")
+        self._html(quote + self._card(f"<p style='color:#ececf3'>{html.escape(text).replace(chr(10), '<br>')}</p>"
+                                      "<p style='font-size:12px; color:#c4b5fd'>✦ AI explanation (Claude)</p>",
+                                      bg="#1d1830")
+                   + "<p style='color:#6f6f88; font-size:11px; margin-top:12px'>Genius hasn't explained this line. "
+                     "The AI's answer is an interpretation and can be wrong.</p>")
 
     # ------------------------------------------------------------------ answers from the background
     def _on_done(self, req, what, result):
@@ -385,28 +587,67 @@ class MeaningsWindow(QWidget):
         if isinstance(result, MeaningsError):
             self.status.setText(str(result))
             if what == "ai":
-                self._html(self._ai_quote + f"<p style='color:#fbbf24'>{html.escape(str(result))}</p>")
-            elif what == "song":
-                self._html(f"<p style='color:#fbbf24'>{html.escape(str(result))}</p>")
+                self._html(self._ai_quote + self._card(f"<p style='color:#fbbf24'>{html.escape(str(result))}</p>"))
+            elif what in ("song", "search"):
+                self._chips("", "")
+                self._html(self._empty("⚠️", "Something went wrong", html.escape(str(result))))
             return
         if what == "search":
             self.results.clear()
             for hit in result:
-                it = QListWidgetItem(hit.label)
+                it = QListWidgetItem(f"{hit.title}\n{hit.artist}")
                 it.setData(Qt.ItemDataRole.UserRole, hit)
+                it.setIcon(self._thumb_icon(hit.thumb))
                 self.results.addItem(it)
             if not result:
                 self.results.addItem(QListWidgetItem("No songs found."))
             self.left.setCurrentWidget(self.results)
-            self.title_lbl.setText("Search results")
-            self.artist_lbl.setText(f"for “{self.search.text().strip()}” – click a song")
+            self.left_kicker.setText("RESULTS")
+            self.kicker.setText("SEARCH")
+            self.title_lbl.setText(f"“{self.search.text().strip()}”")
+            self.artist_lbl.setText("Pick a song from the list.")
+            self._chips(f"{len(result)} songs" if result else "", "Genius" if self.s.genius_token else "LRCLIB")
+            self._set_art(None)
             self.follow.setVisible(False)
+            self._html(self._empty("👈", "Pick a song", "Choose one of the results to see its lyrics and meanings."))
             self.status.setText("")
+            for hit in result:
+                if hit.thumb and hit.thumb not in self._thumbs:
+                    self._fetch_thumb(hit.thumb)
         elif what == "song":
             self._show_song(result)
         elif what == "ai":
             self._show_ai(self._ai_quote, result)
             self.status.setText("")
+        elif what == "thumb":
+            url, data = result
+            pm = _rounded(data, 48, 8)
+            if pm is not None:
+                self._thumbs[url] = QIcon(pm)
+                for k in range(self.results.count()):
+                    it = self.results.item(k)
+                    hit = it.data(Qt.ItemDataRole.UserRole)
+                    if isinstance(hit, SongHit) and hit.thumb == url:
+                        it.setIcon(self._thumbs[url])
+
+    def _thumb_icon(self, url: str) -> QIcon:
+        if url in self._thumbs:
+            return self._thumbs[url]
+        pm = QPixmap(48, 48)
+        pm.fill(QColor("#1d1b28"))
+        return QIcon(pm)
+
+    def _fetch_thumb(self, url: str):
+        req = self._req
+
+        def work():
+            try:
+                r = urllib.request.Request(url, headers={"User-Agent": "SpotifyLyricsOverlay"})
+                with urllib.request.urlopen(r, timeout=10) as resp:
+                    return url, resp.read(1_500_000)
+            except Exception:
+                return url, None
+        self.pool.submit(work).add_done_callback(lambda f: self._done.emit(req, "thumb", f.result()))
 
     # ------------------------------------------------------------------ following the song
     def _follow_changed(self, on: bool):
@@ -421,9 +662,8 @@ class MeaningsWindow(QWidget):
         if not np_ or np_["title"] != self.song["title"]:
             return
         pos = self.ctl.overlay.position
-        starts = self.song["starts"]
         idx = -1
-        for k, t in enumerate(starts):
+        for k, t in enumerate(self.song["starts"]):
             if t <= pos:
                 idx = k
             else:
@@ -433,20 +673,19 @@ class MeaningsWindow(QWidget):
             return
         if 0 <= self._now_row < self.lyrics.count():
             old = self.lyrics.item(self._now_row)
+            old.setData(SINGING, False)
             f = old.font()
             f.setBold(False)
             old.setFont(f)
-            old.setForeground(QColor("#d9d9e6"))
         self._now_row = row
         if row >= 0:
             it = self.lyrics.item(row)
+            it.setData(SINGING, True)
             f = QFont(it.font())
             f.setBold(True)
             it.setFont(f)
-            it.setForeground(NOW)
             self.lyrics.scrollToItem(it, QListWidget.ScrollHint.PositionAtCenter)
 
 
 def _short(s: str) -> str:
-    import re
     return re.sub(r"[^\w]+", "", (s or "").lower())
