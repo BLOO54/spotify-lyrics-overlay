@@ -10,12 +10,12 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPixmap, QTextDocument
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QPushButton, QStackedWidget, QStyle, QStyledItemDelegate, QTextBrowser, QVBoxLayout,
                                QWidget)
 
-from .meanings import AiExplainer, GeniusClient, MeaningsError, SongHit, line_explanations
+from .meanings import AiExplainer, GeniusClient, MeaningsError, SongHit, image_urls, line_explanations
 from .settings_dialog import STYLE
 
 log = logging.getLogger(__name__)
@@ -91,6 +91,25 @@ def _accent_from(img_bytes: bytes | None) -> str:
         return DEFAULT_ACCENT
 
 
+class _PictureBrowser(QTextBrowser):
+    """A QTextBrowser that shows pictures from the internet: the window downloads them,
+    and this hands them to the page (a blank space shows until a picture has arrived)."""
+
+    def __init__(self, images: dict):
+        super().__init__()
+        self.images = images
+
+    def loadResource(self, kind, url):
+        if kind == QTextDocument.ResourceType.ImageResource and url.scheme() in ("http", "https"):
+            img = self.images.get(url.toString())
+            if img is not None:
+                return img
+            blank = QImage(1, 1, QImage.Format.Format_ARGB32)
+            blank.fill(Qt.GlobalColor.transparent)
+            return blank
+        return super().loadResource(kind, url)
+
+
 class _LineDelegate(QStyledItemDelegate):
     """Draws the lyric lines: a soft tint + accent bar for explained lines, a stronger one for the
     selected line and a glow for the line being sung."""
@@ -125,6 +144,7 @@ class _LineDelegate(QStyledItemDelegate):
 class MeaningsWindow(QWidget):
     _done = Signal(int, str, object)       # request number, what, result (or MeaningsError)
     _art = Signal(int, object)             # request number, image bytes
+    _pic = Signal(str, object)             # picture url, image bytes (pictures inside explanations)
 
     def __init__(self, ctl):
         super().__init__(None)
@@ -143,6 +163,9 @@ class MeaningsWindow(QWidget):
         self._art_req = 0
         self._done.connect(self._on_done)
         self._art.connect(self._on_art)
+        self._pic.connect(self._on_picture)
+        self._pictures: dict[str, QImage] = {}
+        self._pictures_pending: set[str] = set()
         self.song: dict | None = None        # title, artist, lines, starts, now
         self.meanings = None
         self.line_map: list[list[int]] = []
@@ -250,7 +273,7 @@ class MeaningsWindow(QWidget):
         k2 = QLabel("MEANING")
         k2.setObjectName("kicker")
         rl.addWidget(k2)
-        self.meaning = QTextBrowser()
+        self.meaning = _PictureBrowser(self._pictures)
         self.meaning.setObjectName("meaning")
         self.meaning.setOpenExternalLinks(True)
         rl.addWidget(self.meaning, 1)
@@ -322,7 +345,46 @@ class MeaningsWindow(QWidget):
     def _html(self, body: str):
         self._last_body = body
         px = self._text_px()
+        self.meaning.document().setDefaultStyleSheet(
+            f"a {{ color: {self.accent}; text-decoration: none; }} "
+            "blockquote { color: #c9c9da; margin-left: 12px; font-style: italic; }")
         self.meaning.setHtml(f"<div style='line-height:155%; font-size:{px}px'>{body}</div>")
+        for url in image_urls(body):
+            if url not in self._pictures and url not in self._pictures_pending:
+                self._fetch_picture(url)
+
+    def _fetch_picture(self, url: str):
+        self._pictures_pending.add(url)
+
+        def work():
+            try:
+                r = urllib.request.Request(url, headers={"User-Agent": "SpotifyLyricsOverlay"})
+                with urllib.request.urlopen(r, timeout=15) as resp:
+                    return resp.read(6_000_000)
+            except Exception:
+                return None
+        self.pool.submit(work).add_done_callback(lambda f: self._pic.emit(url, f.result()))
+
+    def _on_picture(self, url: str, data):
+        self._pictures_pending.discard(url)
+        img = QImage.fromData(data) if data else None
+        if img is None or img.isNull():
+            return
+        try:
+            view = int(self.meaning.viewport().width())
+        except Exception:
+            view = 480
+        widest = max(160, min(420, view - 60))
+        if img.width() > widest:
+            img = img.scaledToWidth(widest, Qt.TransformationMode.SmoothTransformation)
+        if len(self._pictures) >= 60:                    # keep memory small: forget the oldest pictures
+            for old in list(self._pictures)[:20]:
+                self._pictures.pop(old, None)
+        self._pictures[url] = img
+        if url in self._last_body:          # still on screen: show it now
+            bar = self.meaning.verticalScrollBar().value()
+            self._html(self._last_body)
+            self.meaning.verticalScrollBar().setValue(bar)
 
     def _set_accent(self, colour: str):
         if colour != self.accent:
@@ -517,10 +579,10 @@ class MeaningsWindow(QWidget):
         m = self.meanings
         bits = []
         if m and m.about:
-            about = html.escape(m.about).replace(chr(10), "<br>")
+            about = m.about_html or html.escape(m.about).replace(chr(10), "<br>")
             bits.append(f"<p style='font-size:{self._text_px() + 2}px; font-weight:600; color:#ffffff'>"
                         "About this song</p>"
-                        f"<p style='color:#d6d6e2'>{about}</p>")
+                        f"<div style='color:#d6d6e2'>{about}</div>")
         elif m:
             bits.append("<p style='color:#9a9ab0'>Genius has no description for this song.</p>")
         if genius_error:
@@ -559,8 +621,9 @@ class MeaningsWindow(QWidget):
                 if _short(ex.fragment) != _short(lines[i]):
                     frag = (f"<p style='color:#9a9ab0'><i>{html.escape(ex.fragment).replace(chr(10), '<br>')}"
                             "</i></p>")
-                parts.append(self._card(f"{frag}<p style='color:#ececf3'>"
-                                        f"{html.escape(ex.text).replace(chr(10), '<br>')}</p>"
+                text = (f"<div style='color:#ececf3'>{ex.html}</div>" if ex.html else
+                        f"<p style='color:#ececf3'>{html.escape(ex.text).replace(chr(10), '<br>')}</p>")
+                parts.append(self._card(f"{frag}{text}"
                                         f"<p style='font-size:12px'>{' &nbsp;·&nbsp; '.join(tags)}</p>"))
             parts.append("<p style='color:#6f6f88; font-size:11px; margin-top:12px'>"
                          "Explanation from Genius contributors.</p>")

@@ -67,6 +67,7 @@ class Explanation:
     verified: bool = False   # written / approved by the artist
     accepted: bool = True    # reviewed by Genius editors (False = "unreviewed")
     url: str = ""
+    html: str = ""           # the explanation with formatting and pictures (cleaned up), if Genius sent it
 
 
 @dataclass
@@ -74,6 +75,7 @@ class SongMeanings:
     hit: SongHit
     about: str = ""
     explanations: list[Explanation] = field(default_factory=list)
+    about_html: str = ""
 
 
 # --------------------------------------------------------------------------- matching
@@ -121,6 +123,41 @@ def line_explanations(lines: list[str], explanations: list[Explanation]) -> list
             if frag == n or (len(frag) >= 6 and frag in n) or (len(n) >= 6 and n in frag):
                 out[i].append(k)
     return out
+
+
+_ALLOWED = {"p", "br", "a", "b", "strong", "i", "em", "u", "blockquote", "ul", "ol", "li", "img", "small",
+            "sup", "sub", "h1", "h2", "h3", "h4", "hr", "span", "div"}
+
+
+def clean_html(s: str) -> str:
+    """Genius' explanation HTML, made safe and simple for the meanings window: formatting, links and
+    pictures are kept; scripts, embedded videos, styles and anything unusual are removed."""
+    s = s or ""
+    s = re.sub(r"<(script|style|iframe|object|embed|noscript|svg)\b.*?</\1\s*>", "", s, flags=re.I | re.S)
+    s = re.sub(r"<!--.*?-->", "", s, flags=re.S)
+
+    def tag(m):
+        closing, name, attrs = m.group(1), m.group(2).lower(), m.group(3) or ""
+        if name not in _ALLOWED:
+            return ""
+        if closing:
+            return f"</{name}>"
+        keep = ""
+        if name == "a":
+            href = re.search(r'href\s*=\s*"(https?://[^"]+)"', attrs, re.I)
+            keep = f' href="{href.group(1)}"' if href else ""
+        elif name == "img":
+            src = re.search(r'src\s*=\s*"(https?://[^"]+)"', attrs, re.I)
+            if not src:
+                return ""
+            keep = f' src="{src.group(1)}"'
+        return f"<{name}{keep}>"
+    s = re.sub(r"<\s*(/?)\s*([a-zA-Z0-9]+)([^>]*)>", tag, s)
+    return s.strip()
+
+
+def image_urls(html_text: str) -> list[str]:
+    return re.findall(r'<img src="(https?://[^"]+)"', html_text or "")
 
 
 def html_to_text(s: str) -> str:
@@ -192,16 +229,18 @@ class GeniusClient:
         return best if best_score >= 3 else None
 
     def meanings(self, hit: SongHit) -> SongMeanings:
-        cache = self._cache(f"song|{hit.genius_id}")
+        cache = self._cache(f"song2|{hit.genius_id}")
         got = self._read(cache)
         if got is not None:
             return got
         out = SongMeanings(hit)
-        song = self._get(f"/songs/{hit.genius_id}", {"text_format": "plain"}).get("song") or {}
+        song = self._get(f"/songs/{hit.genius_id}", {"text_format": "plain,html"}).get("song") or {}
         desc = (song.get("description") or {}).get("plain") or ""
         out.about = "" if desc.strip() in ("?", "") else desc.strip()
+        if out.about:
+            out.about_html = clean_html((song.get("description") or {}).get("html") or "")
         for page in range(1, 11):
-            refs = self._get("/referents", {"song_id": hit.genius_id, "text_format": "plain",
+            refs = self._get("/referents", {"song_id": hit.genius_id, "text_format": "plain,html",
                                             "per_page": 50, "page": page}).get("referents") or []
             for ref in refs:
                 frag = ref.get("fragment") or ((ref.get("range") or {}).get("content")) or ""
@@ -211,7 +250,8 @@ class GeniusClient:
                         continue
                     out.explanations.append(Explanation(
                         frag, body.strip(), int(an.get("votes_total") or 0), bool(an.get("verified")),
-                        (ref.get("classification") or "accepted") != "unreviewed", an.get("url") or ""))
+                        (ref.get("classification") or "accepted") != "unreviewed", an.get("url") or "",
+                        clean_html((an.get("body") or {}).get("html") or "")))
             if len(refs) < 50:
                 break
         self._write(cache, out)
@@ -229,7 +269,7 @@ class GeniusClient:
         try:
             d = json.loads(path.read_text(encoding="utf-8"))
             return SongMeanings(SongHit(**d["hit"]), d.get("about", ""),
-                                [Explanation(**e) for e in d.get("explanations", [])])
+                                [Explanation(**e) for e in d.get("explanations", [])], d.get("about_html", ""))
         except Exception:
             return None
 
@@ -237,7 +277,7 @@ class GeniusClient:
         if not path:
             return
         try:
-            path.write_text(json.dumps({"hit": vars(m.hit), "about": m.about,
+            path.write_text(json.dumps({"hit": vars(m.hit), "about": m.about, "about_html": m.about_html,
                                         "explanations": [vars(e) for e in m.explanations]},
                                        ensure_ascii=False), encoding="utf-8")
         except OSError:

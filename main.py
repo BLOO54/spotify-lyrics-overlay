@@ -329,7 +329,11 @@ def main() -> int:
                                  [Explanation("Hold the line and don't let go",
                                               "The singer is talking about a tough boss fight: keep your nerve and "
                                               "don't give up, even when it feels hopeless. It doubles as advice "
-                                              "for real life.", 24, True),
+                                              "for real life.", 24, True, True, "",
+                                              "<p>The singer is talking about a <b>tough boss fight</b>: keep your "
+                                              "nerve and don't give up. It doubles as advice for real life.</p>"
+                                              '<img src="https://raw.githubusercontent.com/BLOO54/spotify-lyrics-'
+                                              'overlay/main/assets/demo_cover.png">'),
                                   Explanation("Every pixel burning bright", "The screen at full brightness at "
                                               "3 AM - the whole world shrinks to the game.", 5, False, False)])
                 win._req += 1
@@ -342,7 +346,7 @@ def main() -> int:
                 win._set_art(ctl.overlay._art_bytes)
                 win.lyrics.setCurrentRow(2)
             QTimer.singleShot(1500, fill)
-            QTimer.singleShot(3000, lambda: ctl.meanings_win and ctl.meanings_win.grab().save(file))
+            QTimer.singleShot(5200, lambda: ctl.meanings_win and ctl.meanings_win.grab().save(file))
         elif what == "reset":
             def arm():
                 ctl.open_settings()

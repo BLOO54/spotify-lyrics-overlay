@@ -146,7 +146,7 @@ jobs:
         run: |
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
           foreach ($what in "settings", "toast", "history", "meanings", "meanings-large", "meanings-search", "synced", "reset") {
-            $wait = if ($what -eq "meanings-search") { "8.5" } else { "4.5" }
+            $wait = if ($what -eq "meanings-search") { "8.5" } elseif ($what -like "meanings*") { "6" } else { "4.5" }
             $p = Start-Process $exe -ArgumentList "--demo","--demo-start","6","--ui-shot",$what,"$PWD\demo-overlay-ui-$what.png","--quit-after",$wait -PassThru
             $null = $p.WaitForExit(60000)
             if (-not (Test-Path "demo-overlay-ui-$what.png")) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 30; throw "no picture of $what" }

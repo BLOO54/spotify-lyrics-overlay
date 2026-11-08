@@ -104,3 +104,30 @@ def test_ai_backup_needs_key():
 
 def test_hit_label():
     assert SongHit(1, "T", "A").label == "T – A"
+
+
+def test_clean_html_keeps_pictures_and_drops_scripts():
+    from app.meanings import clean_html, image_urls
+    raw = ('<p>Look at <a href="https://genius.com/x" onclick="evil()">this</a>:</p>'
+           '<img src="https://images.genius.com/abc.jpg" width="600" height="400" alt="x" onerror="evil()">'
+           '<script>alert(1)</script><iframe src="https://youtube.com/embed/1"></iframe>'
+           '<blockquote style="color:red">quote</blockquote><img src="javascript:bad">')
+    out = clean_html(raw)
+    assert out == ('<p>Look at <a href="https://genius.com/x">this</a>:</p>'
+                   '<img src="https://images.genius.com/abc.jpg"><blockquote>quote</blockquote>')
+    assert image_urls(out) == ["https://images.genius.com/abc.jpg"]
+
+
+def test_genius_html_bodies(tmp_path):
+    refs = {"referents": [{"fragment": "Hold the line", "annotations": [
+        {"body": {"plain": "See https://images.genius.com/p.png",
+                  "html": '<p>See</p><img src="https://images.genius.com/p.png" width="300">'},
+         "state": "accepted"}]}]}
+    seen = []
+    g = GeniusClient("tok", tmp_path, opener=fake_genius(
+        {"/songs/42": {"song": {"description": {"plain": "About", "html": "<p><b>About</b></p>"}}},
+         "/referents": refs}, seen))
+    m = g.meanings(SongHit(42, "Neon Horizon", "Demo Band"))
+    assert m.explanations[0].html == '<p>See</p><img src="https://images.genius.com/p.png">'
+    assert m.about_html == "<p><b>About</b></p>"
+    assert "text_format=plain%2Chtml" in seen[0].full_url
