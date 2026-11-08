@@ -24,7 +24,7 @@ import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QLinearGradient,
-                           QPainter, QPainterPath, QPen, QPixmap)
+                           QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QWidget
 
 from . import win32
@@ -709,9 +709,38 @@ class OverlayWindow(QWidget):
         return 2.2 if self.s.show_background else 3.2   # thicker when there's no box behind
 
     def _text_path(self, f: QFont, x: float, base: float, text: str) -> QPainterPath:
+        """The shape of a piece of text. Turning text into shapes is slow, and most frames draw exactly
+        the same words in the same places, so recent shapes are remembered (and their outlines too)."""
+        key = (f.key(), text, round(x, 2), round(base, 2))
+        cache = self.__dict__.setdefault("_path_cache", {})
+        hit = cache.get(key)
+        if hit is not None:
+            return hit[0]
+        if len(cache) > 600:                 # forget old ones (lines changed / the window moved)
+            cache.clear()
+            self.__dict__.setdefault("_stroke_cache", {}).clear()
+            self.__dict__.setdefault("_path_key", {}).clear()
         path = QPainterPath()
         path.addText(QPointF(x, base), f, text)
+        cache[key] = (path,)
+        self.__dict__.setdefault("_path_key", {})[id(path)] = (key, path)
         return path
+
+    def _outline_of(self, path: QPainterPath, width: float) -> QPainterPath:
+        """The outline shape around text (remembered, like the text shapes)."""
+        entry = self.__dict__.get("_path_key", {}).get(id(path))
+        key = entry[0] if entry is not None and entry[1] is path else None     # only shapes made above
+        cache = self.__dict__.setdefault("_stroke_cache", {})
+        if key is not None and (key, width) in cache:
+            return cache[(key, width)]
+        st = QPainterPathStroker()
+        st.setWidth(width)
+        st.setCapStyle(Qt.PenCapStyle.RoundCap)
+        st.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        outline = st.createStroke(path)
+        if key is not None:
+            cache[(key, width)] = outline
+        return outline
 
     def _draw_text(self, p: QPainter, path: QPainterPath, brush, outline_alpha=0.55,
                    glow: QColor | None = None, glow_strength: float = 1.0):
@@ -723,8 +752,8 @@ class OverlayWindow(QWidget):
                 c.setAlphaF(_clamp01(a * glow.alphaF() * g))
                 p.strokePath(path, QPen(QBrush(c), width, Qt.PenStyle.SolidLine,
                                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        p.strokePath(path, QPen(QBrush(self._outline_color(outline_alpha)), self._outline_width(),
-                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        if outline_alpha > 0.003:
+            p.fillPath(self._outline_of(path, self._outline_width()), self._outline_color(outline_alpha))
         p.fillPath(path, brush)
 
     def _row_x(self, left: float, right: float, width: float) -> float:
