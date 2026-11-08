@@ -26,6 +26,17 @@ LINES = [
 STARTS = [3.0, 7.4, 11.6, 16.0, 29.5, 33.8, 38.1, 42.7]    # with an instrumental break after line 4
 RATE = 16000
 
+# A harder song: loud, busy backing, quiet singing in places, and a chorus that comes back
+# three times word for word (like BIRDBRAIN) - to compare the AI sync options.
+_CHORUS = ["Hold the line and don't let go", "Every pixel burning bright",
+           "Running circles in the rain", "Calling out your name again"]
+HARD_LINES = (["So unsure before the light", "Never certain what to say"] + _CHORUS
+              + ["Counting stars that fade away", "Waiting for a better day"] + _CHORUS
+              + ["Is it all just for the show", "Tell me now before I go"] + _CHORUS)
+# how loud the voice is for each line (lower = harder to hear over the music)
+HARD_VOICE = ([1.0, 0.9] + [0.55, 0.5, 0.55, 0.5] + [0.8, 0.7] + [0.45, 0.4, 0.45, 0.4]
+              + [0.7, 0.6] + [0.4, 0.35, 0.4, 0.35])
+
 
 def read(path):
     with wave.open(str(path), "rb") as w:
@@ -57,6 +68,34 @@ def backing(seconds):
     return out
 
 
+def main_hard(folder):
+    """hard.wav + hard.lrc from hard0.wav, hard1.wav, ... (spoken lines)."""
+    folder = Path(folder)
+    voices = [trim(read(folder / f"hard{i}.wav")) for i in range(len(HARD_LINES))]
+    starts, t = [], 2.0
+    for v in voices:
+        starts.append(t)
+        t += len(v) / RATE + 0.9
+    total = t + 4
+    mix = backing(total) * 2.2                       # much louder backing than the easy song
+    rng = np.random.default_rng(3)
+    mix += 0.05 * rng.standard_normal(len(mix))      # hiss
+    truth = []
+    for i, (v, st) in enumerate(zip(voices, starts)):
+        a = int(st * RATE)
+        mix[a:a + len(v)] += v * HARD_VOICE[i]
+        m = int(st // 60)
+        truth.append(f"[{m:02d}:{st - 60 * m:05.2f}]{HARD_LINES[i]}")
+    mix /= max(1.0, float(np.max(np.abs(mix))) / 0.95)
+    with wave.open(str(folder / "hard.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes((mix * 32767).astype(np.int16).tobytes())
+    (folder / "hard.lrc").write_text("\n".join(truth) + "\n", encoding="utf-8")
+    print(f"hard test song: {total:.1f} s, {len(HARD_LINES)} lines")
+
+
 def main(folder):
     folder = Path(folder)
     total = STARTS[-1] + 6
@@ -81,4 +120,7 @@ def main(folder):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    if len(sys.argv) > 2 and sys.argv[2] == "hard":
+        main_hard(sys.argv[1])
+    else:
+        main(sys.argv[1])

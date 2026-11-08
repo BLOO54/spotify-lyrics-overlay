@@ -215,6 +215,7 @@ def main() -> int:
     parser.add_argument("--ai-test", nargs=4, metavar=("MODEL", "WAV", "LRC", "OUT"),
                         help="CI: run AI sync on a recording and write a report")
     parser.add_argument("--ai-store", help="CI: folder for the AI model")
+    parser.add_argument("--ai-options", default="", help="CI: extra AI options, e.g. second,vocals")
     parser.add_argument("--ai-note", help="CI: show this AI sync note in the overlay header")
     parser.add_argument("--ai-progress", type=float, help="CI: progress (0-1) shown with --ai-note")
     parser.add_argument("--listen-test", help="CI: try recording the PC's sound, report to FILE")
@@ -227,7 +228,7 @@ def main() -> int:
 
     if args.ai_test:
         from app.ai_sync import cli_test
-        return cli_test(*args.ai_test, store_dir=args.ai_store)
+        return cli_test(*args.ai_test, store_dir=args.ai_store, options=args.ai_options)
     if args.app_audio_probe:
         import json
         from app.app_audio import probe

@@ -599,9 +599,10 @@ class SettingsDialog(QDialog):
                                                  "ai_sync_enabled")
         f.addRow(self._w["ai_sync_enabled"])
         self._w["ai_model"] = am = QComboBox()
-        for key in ("light", "best"):
+        for key, what in (("light", "faster"), ("best", "more accurate, slower"),
+                          ("max", "most accurate, 2–3× slower than Best")):
             _, label, size = AI_MODELS[key]
-            am.addItem(f"{label} – {size}" + (" (faster)" if key == "light" else " (more accurate, slower)"), key)
+            am.addItem(f"{label} – {size} ({what})", key)
         am.setCurrentIndex(max(0, am.findData(self.s.ai_model)))
         am.currentIndexChanged.connect(lambda i: (self._set("ai_model", am.itemData(i)),
                                                   self.ai_status_wanted.emit()))
@@ -619,6 +620,18 @@ class SettingsDialog(QDialog):
         al.setCurrentIndex(max(0, al.findData(self.s.ai_listen)))
         al.currentIndexChanged.connect(lambda i: self._set("ai_listen", al.itemData(i)))
         f.addRow("Listen to", al)
+        sep2 = QLabel("Extra accuracy (slower)")
+        sep2.setStyleSheet("color:#c9b8ff; font-weight:600; padding-top:4px;")
+        f.addRow(sep2)
+        self._w["ai_second_pass"] = self._check("Second listen: go back over the parts it missed, knowing which "
+                                                "lyrics to expect there", "ai_second_pass")
+        f.addRow(self._w["ai_second_pass"])
+        self._w["ai_vocals"] = self._check("Separate the vocals from the music before listening "
+                                           "(about 40 MB download)", "ai_vocals")
+        f.addRow(self._w["ai_vocals"])
+        f.addRow(_hint("Each song is still only done once. Roughly, per song: second listen adds 30 s–2 min, "
+                       "vocal separation 1–3 min, and the Max model takes 2–3× as long as Best. Vocal separation "
+                       "helps most with loud, busy songs (it uses Spleeter by Deezer)."))
         self._w["ai_progress_style"] = ap = QComboBox()
         ap.addItem("Bar and %", "bar")
         ap.addItem("Only %", "percent")

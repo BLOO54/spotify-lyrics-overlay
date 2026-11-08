@@ -20,11 +20,11 @@ try:
     hidden += collect_submodules("pykakasi")
 except Exception as e:
     print("pykakasi collection skipped:", e)
-for pkg in ("faster_whisper", "soundcard", "ctranslate2", "onnxruntime"):
+for pkg in ("faster_whisper", "soundcard", "ctranslate2", "onnxruntime", "sherpa_onnx"):
     try:                                         # AI sync: speech recognition + sound capture
         datas += collect_data_files(pkg)
         binaries += collect_dynamic_libs(pkg)
-        hidden += collect_submodules(pkg) if pkg in ("faster_whisper", "soundcard") else []
+        hidden += collect_submodules(pkg) if pkg in ("faster_whisper", "soundcard", "sherpa_onnx") else []
     except Exception as e:
         print(pkg, "collection skipped:", e)
 try:

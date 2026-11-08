@@ -41,10 +41,14 @@ MAX_RECORD_SECONDS = 12 * 60
 MODELS = {
     "light": ("Systran/faster-whisper-small", "Light", "about 0.5 GB"),
     "best": ("Systran/faster-whisper-medium", "Best", "about 1.5 GB"),
+    "max": ("Systran/faster-whisper-large-v3", "Max", "about 3 GB"),
     "tiny": ("Systran/faster-whisper-tiny", "Tiny (testing)", "about 75 MB"),
+    # not a speech model: separates the voice from the music (Spleeter by Deezer, via sherpa-onnx)
+    "vocals": ("csukuangfj/sherpa-onnx-spleeter-2stems-fp16", "Vocal separation", "about 40 MB"),
 }
+SPEECH_MODELS = ("light", "best", "max")
 NEEDED_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt", "vocabulary.json",
-                "preprocessor_config.json")
+                "preprocessor_config.json", "vocals.fp16.onnx", "accompaniment.fp16.onnx")
 HF = "https://huggingface.co"
 USER_AGENT = "SpotifyLyricsOverlay (https://github.com/BLOO54/spotify-lyrics-overlay)"
 
@@ -510,8 +514,14 @@ class ModelStore:
         return self.folder / name
 
     def installed(self, name: str) -> bool:
+        """Downloaded completely (every file the download listed is there)."""
         p = self.path(name)
-        return (p / "ready.json").exists() and (p / "model.bin").exists()
+        try:
+            info = json.loads((p / "ready.json").read_text(encoding="utf-8"))
+            files = [f["path"] for f in info.get("files", [])]
+        except (OSError, ValueError):
+            return False
+        return bool(files) and all((p / f).exists() for f in files)
 
     def size_on_disk(self, name: str) -> int:
         p = self.path(name)
@@ -536,7 +546,7 @@ class ModelStore:
                 lfs = it.get("lfs") or {}
                 files.append({"path": it["path"], "size": int(lfs.get("size") or it.get("size") or 0),
                               "sha256": lfs.get("oid") if lfs else None})
-        if not any(f["path"] == "model.bin" for f in files):
+        if not any(f["path"] in ("model.bin", "vocals.fp16.onnx") for f in files):
             raise RuntimeError("the model files weren't found on Hugging Face")
         return files
 
@@ -797,11 +807,18 @@ class Listener:
 
 # --------------------------------------------------------------------------- the AI
 
-def transcribe(model_dir: Path, audio, language: str | None = None, prompt: str | None = None,
-               threads: int = 2, progress=None) -> list[Heard]:
-    """Run speech recognition on 16 kHz mono float audio; returns every word with its time."""
+def load_whisper(model_dir: Path, threads: int = 2):
     from faster_whisper import WhisperModel
-    model = WhisperModel(str(model_dir), device="cpu", compute_type="int8", cpu_threads=threads)
+    return WhisperModel(str(model_dir), device="cpu", compute_type="int8", cpu_threads=threads)
+
+
+def transcribe(model, audio, language: str | None = None, prompt: str | None = None,
+               threads: int = 2, progress=None) -> list[Heard]:
+    """Run speech recognition on 16 kHz mono float audio; returns every word with its time.
+    `model` is a loaded model (load_whisper) or a model folder."""
+    own = isinstance(model, (str, Path))
+    if own:
+        model = load_whisper(Path(model), threads)
     try:
         segments, info = model.transcribe(
             audio, language=language, word_timestamps=True, vad_filter=False,
@@ -816,10 +833,12 @@ def transcribe(model_dir: Path, audio, language: str | None = None, prompt: str 
                 progress(min(1.0, float(seg.end) / total))
         return words
     finally:
-        del model
+        if own:
+            del model
 
 
-def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store_dir: str | None = None) -> int:
+def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store_dir: str | None = None,
+             options: str = "") -> int:
     """CI: download `model`, hear `wav`, line it up with `lrc` whose times were moved by
     `shift` seconds (like a badly-timed lyrics website) and write what happened to `out`."""
     import wave
@@ -829,10 +848,16 @@ def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store
     from .lrc import parse_lrc
     t0 = time.time()
     store = ModelStore(Path(store_dir) if store_dir else None)
-    report: dict = {"model": model}
+    opts = {o.strip() for o in (options or "").split(",") if o.strip()}
+    report: dict = {"model": model, "options": sorted(opts)}
     try:
         if not store.installed(model):
             store.download(model)
+        if "vocals" in opts and not store.installed("vocals"):
+            t_v = time.time()
+            store.download("vocals")
+            report["vocals_download_s"] = round(time.time() - t_v, 1)
+            report["vocals_size_mb"] = round(store.size_on_disk("vocals") / 1e6)
         report["download_s"] = round(time.time() - t0, 1)
         report["size_mb"] = round(store.size_on_disk(model) / 1e6)
         with wave.open(wav, "rb") as w:
@@ -850,7 +875,8 @@ def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store
         for k in range(0, len(audio), 8000):
             rec.add(audio[k:k + 8000], (k + len(audio[k:k + 8000])) / SAMPLE_RATE)
         job = Job("test", "CI song", "CI", [ln.text for ln in parsed],
-                  [t + shift for t in truth], rec)
+                  [t + shift for t in truth], rec, second_pass="second" in opts,
+                  vocals_dir=store.path("vocals") if "vocals" in opts else None)
         t1 = time.time()
         text, res, msg = run_job(job, store.path(model))
         report.update(hear_s=round(time.time() - t1, 1), message=msg, lrc=text)
@@ -860,6 +886,8 @@ def cli_test(model: str, wav: str, lrc: str, out: str, shift: float = 2.0, store
                           max_error=round(max(errs), 2) if errs else None,
                           mean_error=round(sum(errs) / len(errs), 2) if errs else None,
                           starts=[round(x, 2) if x is not None else None for x in res.starts], truth=truth)
+        if res is not None:
+            report["missed"] = [ln.text for ln, h in zip(parsed, res.heard) if ln.text.strip() and not h]
         report["ok"] = bool(text) and report.get("max_error") is not None and report["max_error"] < 0.8
     except Exception as e:
         log.exception("AI test failed")
@@ -916,40 +944,172 @@ class Job:
     lines: list[str]
     orig_starts: list | None
     recording: Recording
+    second_pass: bool = False          # re-listen to the parts it missed, with those lyrics as a hint
+    vocals_dir: Path | None = None     # separate the voice from the music first (model folder), or None
+
+
+def missed_windows(res: AlignResult, lines: list[str], max_len: float = 26.0) -> list[tuple[float, float, list]]:
+    """Stretches of the song where lines weren't heard: (start, end, line numbers), each short
+    enough for one listen (speech recognition works on up to 30 s at a time)."""
+    n = len(lines)
+    heard = res.heard or [False] * n
+    sung = [i for i in range(n) if lines[i].strip() and res.starts[i] is not None]
+    missed = [i for i in sung if not heard[i]]
+    if not missed:
+        return []
+
+    def prev_heard_end(i):
+        for k in range(i - 1, -1, -1):
+            if heard[k] and res.starts[k] is not None:
+                e = res.line_ends[k] if res.line_ends and res.line_ends[k] is not None else res.starts[k] + 1.0
+                return e
+        return None
+
+    def next_start(i):
+        for k in range(i + 1, n):
+            if lines[k].strip() and res.starts[k] is not None:
+                return res.starts[k]
+        return None
+
+    out = []
+    chunk: list[int] = []
+    t0 = 0.0
+    for i in missed:
+        start = res.starts[i]
+        if chunk and (start - t0 > max_len - 4 or any(heard[k] for k in range(chunk[-1] + 1, i)
+                                                       if lines[k].strip())):
+            nxt = next_start(chunk[-1])
+            out.append((t0, min((nxt if nxt is not None else res.starts[chunk[-1]] + 6) + 1.0, t0 + max_len), chunk))
+            chunk = []
+        if not chunk:
+            pe = prev_heard_end(i)
+            t0 = max(0.0, start - 2.5 if pe is None else max(start - 2.5, pe - 0.5))
+        chunk.append(i)
+    if chunk:
+        nxt = next_start(chunk[-1])
+        out.append((t0, min((nxt if nxt is not None else res.starts[chunk[-1]] + 6) + 1.0, t0 + max_len), chunk))
+    return out
 
 
 def run_job(job: Job, model_dir: Path, threads: int = 2, progress=None) -> tuple[str | None, AlignResult | None, str]:
     """Hear the recorded song and build the AI-timed .lrc. Returns (lrc, result, message).
-    progress(fraction 0..1) is called as the AI works through the song."""
+    progress(fraction 0..1) is called as the AI works through the song.
+
+    Steps: (optional) separate the voice from the music -> listen to the whole song ->
+    match the words to the lyrics -> (optional) listen again to just the parts it missed,
+    this time told which lyrics to expect there -> match again, keeping whatever is better."""
     import numpy as np
-    heard: list[Heard] = []
     lang = whisper_language(job.lines)
     prompt = " ".join(ln for ln in job.lines if ln.strip())[:200] or None
-    loud = 0.0
     pieces = [s for s in job.recording.segments if s.seconds >= 8]
     total = max(sum(s.seconds for s in pieces), 0.1)
+    # how much of the progress bar each step gets
+    w_sep = 0.35 if job.vocals_dir else 0.0
+    w_pass2 = 0.2 if job.second_pass else 0.0
+    w_pass1 = 1.0 - w_sep - w_pass2
+
+    def report(x):
+        if progress:
+            progress(min(1.0, max(0.0, x)))
+    report(0.0)
+    model = load_whisper(model_dir, threads) if isinstance(model_dir, (str, Path)) else model_dir
+    extras: list[str] = []
+
+    # ---- 1. the audio (voice only, if asked)
+    audio_pieces: list[tuple[float, object]] = []
+    loud = 0.0
+    separator = None
+    if job.vocals_dir:
+        try:
+            from .vocals import VocalSeparator
+            separator = VocalSeparator(job.vocals_dir, threads)
+        except Exception as e:
+            log.warning("vocal separation unavailable: %s", e)
+            extras.append("vocal separation didn't work")
     done = 0.0
-    if progress:
-        progress(0.0)
     for seg in pieces:
         audio = np.concatenate(seg.frames).astype(np.float32)
         loud = max(loud, float(np.sqrt(np.mean(audio * audio))) if len(audio) else 0.0)
-        if loud >= 1e-4:
-            part = (lambda f, d=done, n=seg.seconds: progress((d + f * n) / total)) if progress else None
-            for w in transcribe(model_dir, audio, lang, prompt, threads, part):
-                heard.append(Heard(w.text, w.start + seg.start, w.end + seg.start))
+        if separator is not None and loud >= 1e-4:
+            try:
+                audio = separator.isolate(audio, SAMPLE_RATE,
+                                          lambda f, d=done, n=seg.seconds: report(w_sep * (d + f * n) / total))
+            except Exception as e:
+                log.warning("vocal separation failed: %s", e)
+                separator = None
+                extras.append("vocal separation didn't work")
+        audio_pieces.append((seg.start, audio))
         done += seg.seconds
-    if progress:
-        progress(1.0)
     if loud < 1e-4:
         return None, None, "the recording was silent (is Spotify playing on a different sound device?)"
+    if separator is not None:
+        extras.append("vocals separated")
+    report(w_sep)
+
+    # ---- 2. listen to the whole song
+    heard: list[Heard] = []
+    done = 0.0
+    for start, audio in audio_pieces:
+        n = len(audio) / SAMPLE_RATE
+        part = lambda f, d=done, n=n: report(w_sep + w_pass1 * (d + f * n) / total)
+        for w in transcribe(model, audio, lang, prompt, threads, part):
+            heard.append(Heard(w.text, w.start + start, w.end + start))
+        done += n
     heard.sort(key=lambda w: w.start)
     log.info("AI heard %d words in %s (from %.0f s to %.0f s)", len(heard), job.title,
              heard[0].start if heard else 0, heard[-1].end if heard else 0)
     res = align(job.lines, heard, job.orig_starts)
+    report(w_sep + w_pass1)
+
+    # ---- 3. listen again to just the parts it missed, told what to expect
+    if job.second_pass and res.matched_lines < res.lyric_lines:
+        windows = missed_windows(res, job.lines)[:24]
+        before = res.matched_lines
+        for k, (t0, t1, idxs) in enumerate(windows):
+            report(w_sep + w_pass1 + w_pass2 * k / max(len(windows), 1))
+            clip = _clip(audio_pieces, t0, t1)
+            if clip is None:
+                continue
+            c0, audio = clip
+            span = len(audio) / SAMPLE_RATE
+            hint = " ".join(job.lines[i] for i in idxs)[:220]
+            try:
+                again = transcribe(model, audio, lang, hint, threads)
+            except Exception as e:
+                log.warning("second listen failed: %s", e)
+                break
+            if not again or len(again) > 7 * max(span, 1.0):        # nonsense (far too many words)
+                continue
+            # only the missed part itself is replaced: the window runs a little into the next (already
+            # heard) line so a late start isn't cut off, but those words are kept from the first listen
+            core_end = min(c0 + span, t1 - 1.0)
+            got = [Heard(w.text, w.start + c0, w.end + c0) for w in again if w.start + c0 < core_end]
+            cand = sorted([w for w in heard if not (c0 <= w.start < core_end)] + got, key=lambda w: w.start)
+            res2 = align(job.lines, cand, job.orig_starts)
+            if res2.matched_lines > res.matched_lines:
+                heard, res = cand, res2
+        if res.matched_lines > before:
+            extras.append(f"2nd listen found {res.matched_lines - before} more")
+        log.info("second listen: %d -> %d lines", before, res.matched_lines)
+    report(1.0)
+
     need = 0.3 if job.orig_starts else 0.55
     if res.quality < need:
         return None, res, (f"only heard {res.matched_lines} of {res.lyric_lines} lines clearly - "
                            "kept the normal timing")
-    note = f"AI heard {res.matched_lines}/{res.lyric_lines} lines"
+    note = f"AI heard {res.matched_lines}/{res.lyric_lines} lines" + (f" ({', '.join(extras)})" if extras else "")
     return to_lrc(job.lines, res, job.title, job.artist, note), res, note
+
+
+def _clip(audio_pieces, t0: float, t1: float):
+    """The recorded audio between two song times: (actual start, samples) or None."""
+    for start, audio in audio_pieces:
+        end = start + len(audio) / SAMPLE_RATE
+        if start <= t0 < end or (t0 < start < t1):
+            a = max(t0, start)
+            b = min(t1, end)
+            if b - a < 1.0:
+                return None
+            i, j = int((a - start) * SAMPLE_RATE), int((b - start) * SAMPLE_RATE)
+            return a, audio[i:j]
+    return None

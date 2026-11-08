@@ -19,7 +19,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         shell: pwsh
@@ -183,6 +183,56 @@ jobs:
           if (-not $r.ok) { throw "AI sync test failed" }
           "Download: $($r.download_s) s, $($r.size_mb) MB. Hearing the song: $($r.hear_s) s. Matched $($r.matched)/$($r.lines) lines, worst error $($r.max_error) s"
 
+      - name: AI sync accuracy - hard song, normal vs second listen vs vocal separation
+        timeout-minutes: 30
+        run: |
+          $dir = "$env:RUNNER_TEMP\aitest"
+          Add-Type -AssemblyName System.Speech
+          $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+          $lines = python -c "import sys; sys.path.insert(0,'tools'); import make_ai_test_song as m; print(chr(10).join(m.HARD_LINES))"
+          $i = 0
+          foreach ($line in ($lines -split "`n")) {
+            if (-not $line.Trim()) { continue }
+            $voice.SetOutputToWaveFile("$dir\hard$i.wav", $fmt); $voice.Speak($line.Trim()); $voice.SetOutputToNull(); $i++
+          }
+          python tools/make_ai_test_song.py $dir hard
+          Copy-Item "$dir\hard.wav" ci-ai-hard-song.wav
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          $runs = [ordered]@{ "normal" = ""; "second" = "second"; "vocals" = "vocals"; "both" = "second,vocals" }
+          $summary = @()
+          foreach ($name in $runs.Keys) {
+            $out = "$PWD\ci-ai-hard-$name.json"
+            $t = Measure-Command {
+              $p = Start-Process $exe -ArgumentList "--ai-test","light","$dir\hard.wav","$dir\hard.lrc",$out,"--ai-store","$env:RUNNER_TEMP\aimodels","--ai-options",$runs[$name] -PassThru
+              if (-not $p.WaitForExit(900000)) { Stop-Process $p -Force; throw "AI test '$name' took too long" }
+            }
+            if (-not (Test-Path $out)) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 40; throw "no report for '$name' (crashed?)" }
+            $r = Get-Content $out -Raw | ConvertFrom-Json
+            if ($r.error) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 40; throw "AI test '$name' failed: $($r.error)" }
+            $summary += "{0,-7} matched {1,2}/{2}  worst {3,5} s  mean {4,5} s  took {5,4:N0} s  {6}" -f $name, $r.matched, $r.lines, $r.max_error, $r.mean_error, $t.TotalSeconds, $r.message
+          }
+          $summary | Tee-Object -FilePath ci-ai-compare.txt
+          Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 12
+
+      - name: AI sync Max model test (only when the commit asks for it)
+        if: contains(github.event.head_commit.message, '[max-test]')
+        timeout-minutes: 40
+        run: |
+          $dir = "$env:RUNNER_TEMP\aitest"
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          foreach ($song in "test", "hard") {
+            $out = "$PWD\ci-ai-max-$song.json"
+            $t = Measure-Command {
+              $p = Start-Process $exe -ArgumentList "--ai-test","max","$dir\$song.wav","$dir\$(if ($song -eq 'test') {'truth'} else {'hard'}).lrc",$out,"--ai-store","$env:RUNNER_TEMP\aimodels" -PassThru
+              if (-not $p.WaitForExit(2100000)) { Stop-Process $p -Force; throw "Max model test took too long" }
+            }
+            if (-not (Test-Path $out)) { Get-Content "$env:APPDATA\SpotifyLyricsOverlay\app.log" -Tail 40; throw "no Max report" }
+            $r = Get-Content $out -Raw | ConvertFrom-Json
+            if ($r.error) { throw "Max model failed: $($r.error)" }
+            "max on $song : matched $($r.matched)/$($r.lines), worst $($r.max_error) s, mean $($r.mean_error) s, download $($r.download_s) s ($($r.size_mb) MB), took $([int]$t.TotalSeconds) s" | Tee-Object -FilePath ci-ai-max.txt -Append
+          }
+
       - name: Can the PC's sound be recorded (needs a sound device - info only)
         continue-on-error: true
         run: |
@@ -280,13 +330,18 @@ jobs:
             ci-listen.json
             ci-app-audio.json
             ci-x-check.txt
+            ci-ai-compare.txt
+            ci-ai-hard-*.json
+            ci-ai-max.txt
+            ci-ai-max-*.json
+            ci-ai-hard-song.wav
             ci-ai-test-song.wav
             demo-overlay-*-screen.png
           fail_on_unmatched_files: false
           overwrite_files: true
 
       - name: Publish GitHub Release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !contains(github.event.head_commit.message, '[no-release]')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}

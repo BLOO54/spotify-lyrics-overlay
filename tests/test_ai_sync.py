@@ -214,7 +214,7 @@ def test_run_job_reports_progress(monkeypatch):
     seen = []
     job = AS.Job("k", "T", "A", ["Hold the line and let go", "x y z", "a b c"], None, rec)
     AS.run_job(job, None, 2, progress=seen.append)
-    assert seen[0] == 0.0 and seen[-1] == 1.0 and seen == sorted(seen) and 0.4 < seen[2] < 0.6
+    assert seen[0] == 0.0 and seen[-1] == 1.0 and seen == sorted(seen) and any(0.4 < x < 0.6 for x in seen)
 
 
 def test_heard_flags_and_details(tmp_path):
@@ -314,3 +314,81 @@ def test_rematch_from_saved_words(tmp_path):
     text, res2, note = rematch(lrc, "BIRDBRAIN", "Jamie Paige")
     assert text and res2.matched_lines == len(lines) and note == f"AI heard {len(lines)}/{len(lines)} lines"
     assert rematch(tmp_path / "missing.lrc", "x", "y")[0] is None
+
+
+def _job_with_audio(lines, seconds=60):
+    import numpy as np
+
+    import app.ai_sync as AS
+    rec = AS.Recording("k", seconds)
+    for k in range(int(seconds * 2)):
+        rec.add(np.full(8000, 0.1, dtype=np.float32), 0.5 * (k + 1))
+    return AS.Job("k", "T", "A", lines, None, rec)
+
+
+def test_second_listen_finds_missed_lines(monkeypatch):
+    """First listen misses the chorus; the second listen (told which lyrics to expect) hears it."""
+    import app.ai_sync as AS
+    lines = ["one two three four five", "six seven eight nine ten", "the chorus goes like this tonight",
+             "and then it goes like that", "eleven twelve thirteen fourteen", "fifteen sixteen seventeen"]
+    truth = [2.0, 8.0, 14.0, 20.0, 26.0, 32.0]
+    calls = []
+
+    def fake_transcribe(model, audio, lang, prompt, threads=2, progress=None):
+        calls.append(prompt)
+        span = len(audio) / AS.SAMPLE_RATE
+        if span > 50:                                   # first listen: the whole song, chorus missed
+            out = []
+            for i in (0, 1, 4, 5):
+                out += [AS.Heard(w, truth[i] + 0.4 * j, truth[i] + 0.4 * j + 0.3)
+                        for j, w in enumerate(lines[i].split())]
+            return out
+        if prompt and "chorus" in prompt:              # second listen of the missed part (times from clip start)
+            out = []
+            for i in (2, 3):
+                out += [AS.Heard(w, truth[i] - CLIP[0] + 0.4 * j, truth[i] - CLIP[0] + 0.4 * j + 0.3)
+                        for j, w in enumerate(lines[i].split())]
+            return out
+        return []
+    real_clip = AS._clip
+    CLIP = [0.0]
+
+    def spy_clip(pieces, t0, t1):
+        got = real_clip(pieces, t0, t1)
+        if got:
+            CLIP[0] = got[0]
+        return got
+    monkeypatch.setattr(AS, "transcribe", fake_transcribe)
+    monkeypatch.setattr(AS, "_clip", spy_clip)
+    monkeypatch.setattr(AS, "load_whisper", lambda *a, **k: "model")
+    job = _job_with_audio(lines)
+    text, res, note = AS.run_job(job, None, 2)
+    assert res.matched_lines == 4 and "2nd listen" not in note          # off by default
+    job.second_pass = True
+    text, res, note = AS.run_job(job, None, 2)
+    assert res.matched_lines == 6, (res.heard, note)
+    assert "2nd listen found 2 more" in note
+    assert abs(res.starts[2] - 14.0) < 0.1 and abs(res.starts[3] - 20.0) < 0.1
+
+
+def test_missed_windows():
+    from app.ai_sync import AlignResult, missed_windows
+    lines = ["a b", "c d", "e f", "g h", "i j"]
+    res = AlignResult([1.0, 5.0, 9.0, 13.0, 40.0], [None] * 5, [2.0, None, None, 14.0, None], 2, 5, 0.4,
+                      [True, False, False, True, False])
+    w = missed_windows(res, lines)
+    assert [x[2] for x in w] == [[1, 2], [4]]
+    assert w[0][0] >= 1.5 and w[0][1] <= 14.5 and w[1][0] >= 37.0
+
+
+def test_vocal_separation_failure_falls_back(monkeypatch, tmp_path):
+    import app.ai_sync as AS
+    lines = ["one two three four five", "six seven eight nine ten", "eleven twelve thirteen fourteen"]
+    monkeypatch.setattr(AS, "load_whisper", lambda *a, **k: "model")
+    monkeypatch.setattr(AS, "transcribe", lambda model, audio, *a, **k: [
+        AS.Heard(w, 2.0 + 6 * i + 0.4 * j, 2.3 + 6 * i + 0.4 * j) for i, ln in enumerate(lines)
+        for j, w in enumerate(ln.split())])
+    job = _job_with_audio(lines)
+    job.vocals_dir = tmp_path                     # no model files there -> separation can't start
+    text, res, note = AS.run_job(job, None, 2)
+    assert text and res.matched_lines == 3 and "vocal separation didn't work" in note

@@ -16,4 +16,6 @@ pykakasi>=2.2
 # downloaded if you turn the feature on.
 faster-whisper>=1.0
 soundcard>=0.4.3; sys_platform == "win32"
+# optional "separate the vocals first" (Spleeter models, run with sherpa-onnx - Apache-2.0)
+sherpa-onnx>=1.12
 numpy>=1.24

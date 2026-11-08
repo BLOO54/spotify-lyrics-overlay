@@ -105,7 +105,9 @@ class Settings:
     meanings_text_size: str = "normal"    # Song meanings: size of the meaning text - normal | large | huge          # Song meanings: highlight the line being sung
     use_my_files: bool = True             # use the songs you synced yourself (files in "my_lyrics")
     ai_sync_enabled: bool = False         # AI sync: listen to each song once and time the lyrics
-    ai_model: str = "light"               # "light" (~0.5 GB) | "best" (~1.5 GB)
+    ai_model: str = "light"               # "light" (~0.5 GB) | "best" (~1.5 GB) | "max" (~3 GB)
+    ai_second_pass: bool = False          # AI sync: listen again to the parts it missed (slower)
+    ai_vocals: bool = False               # AI sync: separate the voice from the music first (slower)
     ai_threads: int = 2                   # CPU cores the AI may use while it works
     ai_progress_style: str = "bar"        # AI sync progress in the overlay header: "bar" | "percent" | "off"
     ai_listen: str = "app"                # "app" = only Spotify's sound | "pc" = everything the PC plays
@@ -175,7 +177,7 @@ class Settings:
         if self.background_style not in ("solid", "frosted"):
             self.background_style = "solid"
         self.corner_radius = max(0, min(40, int(self.corner_radius)))
-        if self.ai_model not in ("light", "best"):
+        if self.ai_model not in ("light", "best", "max"):
             self.ai_model = "light"
         self.ai_threads = max(1, min(8, int(self.ai_threads)))
         if self.meanings_text_size not in ("normal", "large", "huge"):

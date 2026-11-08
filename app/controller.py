@@ -657,6 +657,8 @@ class Controller(QObject):
             self.settings_dlg.refresh()          # show the height that was just frozen
         if self.meanings_win is not None:
             self.meanings_win.apply_text_size()
+        if self.s.ai_vocals and not self.ai_store.installed("vocals") and not self._ai_download:
+            self.ai_download("vocals")              # turned on: get the vocal separation model (~40 MB)
         ai_now = (self.s.ai_sync_enabled, self.s.ai_model, self.s.use_my_files)
         if ai_now != self._ai_prev:
             self._ai_prev = ai_now
@@ -835,6 +837,14 @@ class Controller(QObject):
             return f"{label} model not downloaded yet ({size})."
         mb = self.ai_store.size_on_disk(name) / 1e6
         bits = [f"{label} model installed ({mb:,.0f} MB)."]
+        extra = []
+        if self.s.ai_second_pass:
+            extra.append("second listen on")
+        if self.s.ai_vocals:
+            extra.append("vocal separation " + ("on" if self.ai_store.installed("vocals") else
+                                                "downloading…" if self._ai_download else "needs its download"))
+        if extra:
+            bits.append("Extra accuracy: " + ", ".join(extra) + ".")
         if not self.s.ai_sync_enabled:
             bits.append("AI sync is off (the model stays installed).")
         elif self.ai_listener is not None and self.ai_listener.error:
@@ -926,7 +936,9 @@ class Controller(QObject):
             self._ai_skipped[key] = (f"Only heard {heard:.0f} s of this song before it changed – it needs most of "
                                      "the song, so it'll listen again next time it plays.")
             return
-        job = ai_sync.Job(key, title, artist, lines, orig, rec)
+        vocals = self.ai_store.path("vocals") if (self.s.ai_vocals and self.ai_store.installed("vocals")) else None
+        job = ai_sync.Job(key, title, artist, lines, orig, rec, second_pass=self.s.ai_second_pass,
+                          vocals_dir=vocals)
         model_dir = self.ai_store.path(self.s.ai_model)
         threads = self.s.ai_threads
         self._ai_jobs += 1
@@ -1063,7 +1075,10 @@ class Controller(QObject):
     def _on_ai_downloaded(self, name, err):
         self._ai_download = None
         self._ai_dl_text = ""
-        if err is None:
+        if err is None and name == "vocals":
+            self.notify("Vocal separation is ready – the AI will separate the voice from the music before "
+                        "listening.", "success", 5000, keep=True)
+        elif err is None:
             if not self.s.ai_sync_enabled:
                 self.s.ai_sync_enabled = True
                 self.s.save()
@@ -1344,6 +1359,12 @@ class Controller(QObject):
             need.append((None, "Listening to everything the PC plays (setting: Listen to → Everything)"))
         if lis is not None and lis.error:
             need.append((False, lis.error))
+        if s.ai_second_pass:
+            need.append((True, "Second listen for missed parts is on"))
+        if s.ai_vocals:
+            ok_v = self.ai_store.installed("vocals")
+            need.append((ok_v, "Vocal separation is on" if ok_v else
+                         "Vocal separation: its model (about 40 MB) is downloading / needs downloading"))
         # ---- working on another song?
         working = None
         if self._ai_jobs and self._ai_job_key is not None and self._ai_job_key != self.track_key:
