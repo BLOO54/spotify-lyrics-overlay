@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import html
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QProgressBar,
-                               QPushButton, QTextBrowser, QVBoxLayout, QWidget)
+from concurrent.futures import ThreadPoolExecutor
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QProgressBar, QPushButton, QTextBrowser, QVBoxLayout, QWidget)
 
 from .settings_dialog import STYLE
 
@@ -30,6 +32,8 @@ QTextBrowser#lines { background: transparent; border: none; color: #e6e6f0; font
 
 
 class AiSyncWindow(QWidget):
+    _found = Signal(int, object)          # search number, list of (title, artist, has_lyrics)
+
     def __init__(self, ctl):
         super().__init__(None)
         self.ctl = ctl
@@ -41,6 +45,9 @@ class AiSyncWindow(QWidget):
         self.setMinimumSize(760, 560)
         self._songs_key = None
         self._selected = None
+        self._search_no = 0
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-search")
+        self._found.connect(self._on_found)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 18, 22, 16)
@@ -100,6 +107,37 @@ class AiSyncWindow(QWidget):
         top.addWidget(need_card, 2)
         root.addLayout(top)
 
+        # ---- sync one song
+        one_card, ol = self._card("SYNC ONE SONG")
+        orow = QHBoxLayout()
+        self.one_search = QLineEdit()
+        self.one_search.setPlaceholderText("Search a song to sync…")
+        self.one_search.returnPressed.connect(self._search)
+        find = QPushButton("Search")
+        find.clicked.connect(self._search)
+        self.one_pick = QComboBox()
+        self.one_pick.setMinimumWidth(280)
+        self.one_pick.setEnabled(False)
+        self.one_go = QPushButton("Sync this song")
+        self.one_go.setObjectName("primary")
+        self.one_go.setEnabled(False)
+        self.one_go.clicked.connect(self._sync_one)
+        self.one_cancel = QPushButton("Cancel")
+        self.one_cancel.clicked.connect(lambda: (self.ctl.cancel_one_song(), self.refresh()))
+        self.one_cancel.setVisible(False)
+        orow.addWidget(self.one_search, 2)
+        orow.addWidget(find)
+        orow.addWidget(self.one_pick, 3)
+        orow.addWidget(self.one_go)
+        orow.addWidget(self.one_cancel)
+        ol.addLayout(orow)
+        self.one_status = QLabel("Pick a song: Spotify shows it, you press play, the AI syncs just that song and "
+                                 "pauses Spotify when it ends (nothing else plays).")
+        self.one_status.setObjectName("muted")
+        self.one_status.setWordWrap(True)
+        ol.addWidget(self.one_status)
+        root.addWidget(one_card)
+
         # ---- songs + lines it caught / missed
         bottom = QHBoxLayout()
         bottom.setSpacing(14)
@@ -121,6 +159,50 @@ class AiSyncWindow(QWidget):
         self.timer.start(1000)
         self.lines.setHtml("<p style='color:#9a9ab0'>Pick a song on the left to see which lyric lines the AI "
                            "heard, and which it missed and timed from the lines around them.</p>")
+
+    # ------------------------------------------------------------------ sync one song
+    def _search(self):
+        q = self.one_search.text().strip()
+        if not q:
+            return
+        self._search_no += 1
+        no = self._search_no
+        self.one_status.setText("Searching…")
+
+        def work():
+            try:
+                items = self.ctl.client._get_json("/search", {"q": q}) or []
+            except Exception:
+                return None
+            seen, out = set(), []
+            for it in items:
+                key = ((it.get("trackName") or "").strip(), (it.get("artistName") or "").strip())
+                low = (key[0].lower(), key[1].lower())
+                if key[0] and low not in seen:
+                    seen.add(low)
+                    out.append((key[0], key[1], bool(it.get("syncedLyrics") or it.get("plainLyrics"))))
+            return out[:25]
+        self.pool.submit(work).add_done_callback(lambda f: self._found.emit(no, f.result()))
+
+    def _on_found(self, no, results):
+        if no != self._search_no:
+            return
+        self.one_pick.clear()
+        if results is None:
+            self.one_status.setText("Couldn't search right now (internet?).")
+            return
+        for title, artist, has in results:
+            self.one_pick.addItem(f"{title} – {artist}" + ("" if has else "   (no lyrics found)"), (title, artist))
+        self.one_pick.setEnabled(bool(results))
+        self.one_go.setEnabled(bool(results))
+        self.one_status.setText(f"{len(results)} songs found – pick one and press Sync this song." if results
+                                else "No songs found – try the song name and artist.")
+
+    def _sync_one(self):
+        data = self.one_pick.currentData()
+        if data:
+            self.ctl.start_one_song(*data)
+            self.refresh()
 
     def _card(self, title: str):
         card = QFrame()
@@ -187,6 +269,16 @@ class AiSyncWindow(QWidget):
             lab.setWordWrap(True)
             self.need_layout.insertWidget(self.need_layout.count() - 1, lab)
             self.need_labels.append(lab)
+        one = snap.get("one_song")
+        if one:
+            states = {"waiting": "Waiting for it to play", "syncing": "Syncing", "processing": "Working out the timing"}
+            self.one_status.setText(f"<b>{html.escape(one['title'])}</b> – {states.get(one['state'], '')}. "
+                                    f"{html.escape(one.get('note') or '')}")
+            self.one_cancel.setVisible(True)
+            self.one_go.setEnabled(False)
+        else:
+            self.one_cancel.setVisible(False)
+            self.one_go.setEnabled(self.one_pick.count() > 0)
         self._fill_songs(snap)
 
     def _fill_songs(self, snap):

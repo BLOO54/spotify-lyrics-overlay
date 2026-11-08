@@ -138,6 +138,8 @@ class MediaWatcher:
                     secs = max(0.0, float(cmd.split(":", 1)[1]))
                     start = _seconds(s.get_timeline_properties().start_time)
                     await s.try_change_playback_position_async(int((start + secs) * 10_000_000))
+                elif cmd == "pause":
+                    await s.try_pause_async()
                 elif cmd == "restart":
                     info = s.get_playback_info()
                     can_seek = bool(info and info.controls and info.controls.is_playback_position_enabled)

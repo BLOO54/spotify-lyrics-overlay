@@ -132,6 +132,7 @@ class Controller(QObject):
         self.ai_win = None
         self.full_win = None
         self._ai_skipped: dict = {}         # song key -> why the AI didn't sync it this time
+        self._one_song: dict | None = None  # "sync one song" from the AI sync window
         self._ai_job_frac = None
         self._ai_download = None        # (model name, cancel event) while downloading
         self._ai_dl_text = ""
@@ -166,7 +167,7 @@ class Controller(QObject):
         self.top_timer.start(TOPMOST_MS)
         self.ai_timer = QTimer(self)
         self.ai_timer.timeout.connect(self._ai_check)
-        self.ai_timer.start(1000)
+        self.ai_timer.start(250)
 
         self.hotkey_filter = None
         self._registered = set()
@@ -724,6 +725,7 @@ class Controller(QObject):
         self.overlay.playing = st.playing
         self.overlay.duration = st.duration
         if st.track_key != self.track_key:
+            self._one_song_track_changed(st)
             self._ai_finish()
             self.overlay.set_ai_note("")          # the 1-second AI timer shows any AI progress again
             self.track_key = st.track_key
@@ -754,7 +756,11 @@ class Controller(QObject):
         token = self.fetch_token
         title, artist, album, dur = st.title, st.artist, st.album, st.duration
         ai_on = self.s.ai_sync_enabled
-        use_mine = self.s.use_my_files
+        one = self._one_song
+        syncing_this = bool(one and one["state"] == "syncing" and one.get("key") == st.track_key)
+        use_mine = self.s.use_my_files and not syncing_this     # syncing one song: listen even if you synced it
+        if syncing_this:
+            ai_on = False                                       # ...and don't reuse an old AI timing either
 
         def work():
             try:
@@ -892,6 +898,7 @@ class Controller(QObject):
     def _ai_check(self):
         """Every 2 s: once (almost) the whole song has been heard, start the AI."""
         self._update_ai_indicator()
+        self._one_song_check()
         if self.ai_listener is None or self._ai_ctx is None:
             return
         rec = self.ai_listener.peek()
@@ -911,6 +918,10 @@ class Controller(QObject):
         need = (0.35 if orig else 0.8) * (rec.duration or 0)
         self._update_ai_indicator()
         if heard < max(need, 25.0):
+            one = self._one_song
+            if one and one.get("key") == key and one["state"] in ("syncing", "processing"):
+                one["state"] = "waiting"
+                one["note"] = f"Only heard {heard:.0f} s – press play on it again (from the start) to retry."
             log.info("AI sync: only %.0f s of %s heard - not enough, will listen next time", heard, title)
             self._ai_skipped[key] = (f"Only heard {heard:.0f} s of this song before it changed – it needs most of "
                                      "the song, so it'll listen again next time it plays.")
@@ -953,6 +964,12 @@ class Controller(QObject):
 
     def _on_ai_done(self, job, out):
         self._ai_jobs = max(0, self._ai_jobs - 1)
+        one = self._one_song
+        if one and one.get("key") == job.key:
+            self._one_song = None
+            ok = not isinstance(out, Exception) and bool(out[0])
+            self.notify(f"Sync one song: “{job.title}” is {'done' if ok else 'finished, but the AI was unsure'}. "
+                        "Spotify stays paused.", "success" if ok else "info", 6000)
         if job.key == self._ai_job_key:
             self._ai_job_key, self._ai_job_frac = None, None
         self._update_ai_indicator()
@@ -1150,6 +1167,76 @@ class Controller(QObject):
         screen = self.overlay.screen() if hasattr(self.overlay, "screen") else None
         self.full_win.open_on(screen)
 
+    # ------------------------------------------------------------ sync one song
+    @staticmethod
+    def _same_song(a_title, a_artist, b_title, b_artist) -> bool:
+        import re as _re
+        n = lambda s: _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+        ta, tb = n(a_title), n(b_title)
+        if not ta or not tb or not (ta in tb or tb in ta):
+            return False
+        aa, ab = n(a_artist), n(b_artist)
+        return not aa or not ab or aa[:6] in ab or ab[:6] in aa
+
+    def start_one_song(self, title: str, artist: str):
+        """Sync just this song: show it in Spotify, sync it when it plays, pause Spotify at the end."""
+        if not self._ai_ready():
+            self.notify("Turn on AI sync and download a model first.", "info", 4000)
+            return False
+        self._one_song = {"title": title, "artist": artist, "state": "waiting", "note": ""}
+        if self.track and self._same_song(title, artist, self.track.title, self.track.artist):
+            self._one_song_begin(self.track)
+        else:
+            from urllib.parse import quote
+            QDesktopServices.openUrl(QUrl("spotify:search:" + quote(f"{title} {artist}")))
+            self._one_song["note"] = "Spotify is showing it – press play on the song."
+        self._refresh_ai_window()
+        return True
+
+    def cancel_one_song(self):
+        self._one_song = None
+        self._refresh_ai_window()
+
+    def _one_song_track_changed(self, st):
+        one = self._one_song
+        if not one or not st.title:
+            return
+        if self._same_song(one["title"], one["artist"], st.title, st.artist):
+            if one["state"] == "waiting":
+                self._one_song_begin(st)
+        elif one["state"] == "syncing":
+            one["state"] = "waiting"
+            one["note"] = "Another song started before it finished – press play on it again to sync it."
+
+    def _one_song_begin(self, st):
+        one = self._one_song
+        one.update(state="syncing", key=st.track_key, paused=False, note="Listening – it pauses Spotify at the end.")
+        self.ai_lyrics.forget(st.title, st.artist)          # make a fresh AI timing
+        self._ai_skipped.pop(st.track_key, None)
+        if st.position > 2.0:
+            if st.can_seek:
+                self.watcher.request("seek:0")
+                self.clock.reset(0.0, self.clock.playing)
+            else:
+                one["note"] = "Start the song from the beginning so the AI hears all of it."
+        if st.track_key == self.track_key:
+            self._fetch(st)                                  # re-load the lyrics for listening
+
+    def _one_song_check(self):
+        """Every 1/4 s: pause Spotify just before the song ends, so it doesn't go on to the next one."""
+        one = self._one_song
+        if not one or one["state"] != "syncing" or one.get("key") != self.track_key or not self.track:
+            return
+        dur = self.track.duration or 0
+        if dur and self.clock.position() >= dur - 1.5 and not one.get("paused"):
+            one["paused"] = True
+            if not self.demo:
+                self.watcher.request("pause")
+            one["state"] = "processing"
+            one["note"] = "Song finished – Spotify paused. The AI is working out the timing…"
+            self._ai_finish()
+            self._refresh_ai_window()
+
     # ------------------------------------------------------------ AI sync window
     def open_ai_window(self):
         if self.ai_win is None:
@@ -1249,7 +1336,8 @@ class Controller(QObject):
         songs = list_synced(self.ai_lyrics.folder, "ai")
         for e in songs:
             e["details"] = ai_sync.load_details(Path(e["path"]))
-        return {"enabled": s.ai_sync_enabled, "model": f"{label} ({size})", "installed": installed,
+        return {"one_song": dict(self._one_song) if self._one_song else None,
+                "enabled": s.ai_sync_enabled, "model": f"{label} ({size})", "installed": installed,
                 "threads": s.ai_threads, "now": now, "need": need, "working": working,
                 "recent": list(self._recent_ai[:20]), "songs": songs}
 

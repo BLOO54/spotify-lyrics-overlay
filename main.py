@@ -373,6 +373,9 @@ def main() -> int:
                 ctl._recent_ai.insert(0, {"title": "Loud Song", "artist": "Somebody", "ok": False,
                                           "message": "only heard 6 of 40 lines clearly - kept the normal timing"})
                 ctl.open_ai_window()
+                ctl.ai_win.one_search.setText("birdbrain")
+                ctl.ai_win._on_found(ctl.ai_win._search_no, [("BIRDBRAIN", "Jamie Paige", True),
+                                                             ("BIRDBRAIN (feat. OK Glass)", "Jamie Paige", True)])
                 ctl.ai_win.refresh()
                 for k in range(ctl.ai_win.songs.count()):
                     if ctl.ai_win.songs.item(k).text().startswith("Neon Horizon"):
