@@ -43,10 +43,26 @@ RETRY_SECONDS = 15
 FRAME_MS = 16          # ~60 fps
 TOPMOST_MS = 2000
 
-HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER, HK_VERSION = range(1, 7)
+HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER, HK_VERSION, HK_REPORT = range(1, 8)
 # hotkey id -> settings field holding its key combination
 HOTKEY_FIELDS = {HK_TOGGLE: "hk_toggle", HK_CLICK: "hk_click", HK_SETTINGS: "hk_settings",
-                 HK_EARLIER: "hk_earlier", HK_LATER: "hk_later", HK_VERSION: "hk_version"}
+                 HK_EARLIER: "hk_earlier", HK_LATER: "hk_later", HK_VERSION: "hk_version",
+                 HK_REPORT: "hk_report"}
+
+
+class _DiagLogHandler(logging.Handler):
+    """Copies the app's own log messages into the problem-report recorder (last few hundred)."""
+
+    def __init__(self, rec):
+        super().__init__(logging.INFO)
+        self.rec = rec
+
+    def emit(self, record):
+        if record.name.startswith(("app", "main")) and record.name != "app.overlay":
+            try:
+                self.rec.event(f"{record.levelname.lower()} {record.name}: {record.getMessage()[:300]}")
+            except Exception:
+                pass
 
 
 def resource_path(rel: str) -> Path:
@@ -95,6 +111,13 @@ class Controller(QObject):
         self.s = Settings.load()
         self.s.auto_backup()          # a quiet daily copy, so settings can always be brought back
         self.clock = PlaybackClock()
+        from .diagnostics import Recorder
+        self.diag = Recorder()
+        self._last_auto_report = -1e9
+        self._diag_handler = _DiagLogHandler(self.diag)
+        logging.getLogger().addHandler(self._diag_handler)
+        self.clock.on_correct = lambda kind, d: self.diag.event(
+            f"clock {kind}: Spotify was {abs(d):.2f} s {'ahead of' if d > 0 else 'behind'} the lyrics clock")
         self.client = LrclibClient(app_data_dir() / "lyrics_cache")
         self.translator = TranslationService(app_data_dir() / "translation_cache")
         self._extras = None
@@ -156,6 +179,10 @@ class Controller(QObject):
         app.setWindowIcon(self.icon)
 
         self.overlay = OverlayWindow(self.s)
+        self.overlay.on_painted = self.diag.painted
+        self._smooth_timer = QTimer(self)
+        self._smooth_timer.timeout.connect(self._check_smoothness)
+        self._smooth_timer.start(30_000)
         self.overlay.moved.connect(self._on_dragged)
         self.overlay.context_menu_requested.connect(lambda pt: self.menu.popup(pt))
         self.overlay.settings_requested.connect(self.open_settings)
@@ -234,6 +261,8 @@ class Controller(QObject):
         act_meanings = QAction("Song meanings…", self.menu)
         act_meanings.triggered.connect(self.open_meanings)
         self.act_meanings = act_meanings
+        act_report = QAction("Save a problem report…", self.menu)
+        act_report.triggered.connect(self.ask_problem_report)
         act_folder = QAction("Open my lyrics folder", self.menu)
         act_folder.triggered.connect(self.open_lyrics_folder)
         act_refetch = QAction("Reload lyrics", self.menu)
@@ -250,7 +279,8 @@ class Controller(QObject):
                             "hk_settings": (act_settings, "Settings…"),
                             "hk_earlier": (act_earlier, "This song: lyrics earlier (−250 ms)"),
                             "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
-                            "hk_version": (act_version, "Try another lyrics version")}
+                            "hk_version": (act_version, "Try another lyrics version"),
+                            "hk_report": (act_report, "Save a problem report…")}
         self._label_menu()
         for a in (self.act_show, self.act_click, self.act_ai, act_settings, act_meanings, act_full):
             self.menu.addAction(a)
@@ -258,6 +288,7 @@ class Controller(QObject):
         for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
             self.menu.addAction(a)
         self.menu.addSeparator()
+        self.menu.addAction(act_report)
         self.menu.addAction(self.act_update)
         self.menu.addAction(act_check)
         self.menu.addAction(act_quit)
@@ -276,6 +307,7 @@ class Controller(QObject):
     def notify(self, text: str, kind: str = "info", ms: int = 4000, action: str = "", keep: bool = False):
         """Show a pop-up: the app's own sliding card, or a standard Windows notification.
         keep=True also saves it in Settings → Notifications (for things worth looking back at)."""
+        self.diag.event(f"pop-up ({kind}): {text[:200]}")
         if keep:
             self.history.add(text, kind)
             if self.settings_dlg is not None:
@@ -351,6 +383,8 @@ class Controller(QObject):
             self.nudge_offset(-250)
         elif hid == HK_VERSION:
             self.try_other_version()
+        elif hid == HK_REPORT:
+            self.save_problem_report()
 
     # ------------------------------------------------------------ actions
     def set_visible(self, visible: bool):
@@ -736,6 +770,8 @@ class Controller(QObject):
         self.overlay.playing = st.playing
         self.overlay.duration = st.duration
         if changed:
+            self.diag.event(f"song changed to {st.title!r} by {st.artist!r} ({st.duration:.0f} s, at {st.position:.1f} s, "
+                            f"{'playing' if st.playing else 'paused'}, jumping allowed: {st.can_seek})")
             self._one_song_track_changed(st)
             self._ai_finish(on_change=True)
             self.overlay.set_ai_note("")          # the 1-second AI timer shows any AI progress again
@@ -813,6 +849,9 @@ class Controller(QObject):
         self._ai_arm(result)
 
     def _show_result(self, result):
+        self.diag.event(f"lyrics: source={result.source}, synced={bool(result.synced)}, "
+                        f"plain={bool(result.plain)}, instrumental={result.instrumental}, "
+                        f"song shift={self._song_offset_ms} ms")
         if result.instrumental:
             self.overlay.set_lyrics(None, "Instrumental ♪")
         elif result.synced:
@@ -1718,7 +1757,41 @@ class Controller(QObject):
         self.overlay.set_extras(result)
 
     # ------------------------------------------------------------ per-frame
+    def _check_smoothness(self):
+        if not self.overlay.isVisible():
+            return
+        fg = win32.foreground_info() if win32.IS_WINDOWS else {}
+        self.diag.check_smoothness(f"(in front: {fg.get('app', '?')}, full screen: {fg.get('covers_whole_screen')})"
+                                   if fg else "")
+
+    def save_problem_report(self, note: str = "", reason: str = "you asked (shortcut / tray menu)"):
+        from .diagnostics import make_report
+        folder = make_report(self, note, reason)
+        self.notify("Saved a problem report. Tell Claude what went wrong – it can read the report "
+                    f"(folder: problem_reports\\{folder.name}).", "success", 6000, keep=True)
+        return folder
+
+    def ask_problem_report(self):
+        from PySide6.QtWidgets import QInputDialog
+        note, ok = QInputDialog.getMultiLineText(None, "Save a problem report",
+                                                 "What went wrong? (optional – you can also just tell Claude)")
+        if ok:
+            self.save_problem_report(note.strip(), "you asked (tray menu)")
+
+    def auto_problem_report(self, why: str):
+        """Something unexpected broke: save a report on its own (at most every 10 minutes)."""
+        now = _time.monotonic()
+        if now - self._last_auto_report < 600:
+            return
+        self._last_auto_report = now
+        try:
+            from .diagnostics import make_report
+            make_report(self, "", f"saved automatically: {why}")
+        except Exception:
+            log.exception("automatic problem report failed")
+
     def _tick(self):
+        self.diag.tick()
         if self.overlay.isVisible():
             self.overlay.play_pos = self.clock.position()
             self.overlay.position = self.clock.position() + (self.s.sync_offset_ms + self._song_offset_ms) / 1000.0

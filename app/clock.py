@@ -37,6 +37,7 @@ class PlaybackClock:
         self._playing = False
         self._duration = 0.0
         self._last_raw: tuple[float, datetime | None] | None = None
+        self.on_correct = None         # optional: called (kind, seconds off) when the clock is corrected
         self._glide = 0.0              # correction still to fade out (seconds)
         self._glide_start = 0.0
         self._glide_len = 0.0
@@ -109,6 +110,11 @@ class PlaybackClock:
         target = self.estimate_reported_now(r)
         now = self.position()
         diff = target - now
+        if abs(diff) > RESYNC_THRESHOLD and self.on_correct is not None:
+            try:
+                self.on_correct("jump" if abs(diff) > GLIDE_LIMIT else "glide", diff)
+            except Exception:
+                pass
         if abs(diff) > GLIDE_LIMIT:
             self._set(target, True)                 # a real jump (seek): go straight there
         elif abs(diff) > RESYNC_THRESHOLD:

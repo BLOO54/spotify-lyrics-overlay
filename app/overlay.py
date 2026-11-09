@@ -871,7 +871,15 @@ class OverlayWindow(QWidget):
         return f"{format_time(pos)} / {format_time(self.duration)}"
 
     # ------------------------------------------------------------ paint
-    def paintEvent(self, _):
+    on_painted = None          # optional: called with how many ms each drawing took (problem reports)
+
+    def paintEvent(self, e):
+        t0 = time.perf_counter()
+        self._paint_all(e)
+        if self.on_painted is not None:
+            self.on_painted((time.perf_counter() - t0) * 1000)
+
+    def _paint_all(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)

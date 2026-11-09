@@ -228,6 +228,14 @@ Crossfade off (Spotify → Settings → Playback → Crossfade songs). The AI wi
 the AI listens to just that song (from the start) and pauses Spotify when it ends so nothing else plays. The heard / missed list is saved
 for songs synced from version 1.18 on.
 
+### 🩺 Problem reports (for Claude)
+When something looks wrong, press **Ctrl+Alt+R** (change it in Settings → Shortcuts) or use the tray menu →
+**Save a problem report…**. The app saves a folder in `%APPDATA%\SpotifyLyricsOverlay\problem_reports\` with
+what was playing, which lyrics and timing were on screen, the AI sync state, how smoothly the overlay was drawing,
+the last few hundred things the app did, a picture of the overlay and the end of the log (keys and passwords are
+removed). Then just tell Claude what happened - it can read the newest report. A report is also saved
+automatically if the app hits an unexpected error. The newest 10 are kept; nothing is sent anywhere.
+
 ### 💬 Song meanings
 Like Genius, inside the app: Settings → **Song meanings** → **Open song meanings** (or tray → *Song meanings…*).
 Press **Now playing** or search any song, then click a lyric line to read what it means. It opens in

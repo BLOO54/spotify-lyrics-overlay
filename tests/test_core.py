@@ -578,3 +578,27 @@ def test_settings_backup_and_restore(tmp_path, monkeypatch):
     assert len(C.Settings.list_backups()) == C.BACKUPS_KEPT
     s.auto_backup(); s.auto_backup()
     assert sum(1 for x in C.Settings.list_backups() if x["reason"] == "auto") == 1
+
+
+def test_problem_report_recorder_frame_stats():
+    from app.diagnostics import Recorder
+    t = [0.0]
+    rec = Recorder(clock=lambda: t[0])
+    for k in range(300):                                 # 5 s at 60 fps, every 10th frame late
+        t[0] += 0.033 if k % 10 == 0 else 0.0166
+        rec.tick()
+        rec.painted(3.0 if k % 10 else 14.0)
+    st = rec.frame_stats(60.0)
+    assert 9 <= st["late_frames_pct"] <= 11 and st["draw_ms_p95"] == 14.0 and 50 < st["fps"] < 60, st
+    assert rec.check_smoothness() is not None            # warns...
+    assert rec.check_smoothness() is None                # ...but not again right away
+    assert any("uneven" in e for _, e in rec.events)
+
+
+def test_problem_report_hides_secrets():
+    from app.config import Settings
+    from app.diagnostics import _sanitised_settings
+    s = Settings()
+    s.deepl_key = "abc:fx"
+    d = _sanitised_settings(s)
+    assert d["deepl_key"] == "(set)" and d["anthropic_key"] == "" and "abc" not in str(d)

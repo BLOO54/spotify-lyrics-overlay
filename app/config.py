@@ -119,6 +119,7 @@ class Settings:
     hk_earlier: str = "Ctrl+Alt+Left"
     hk_later: str = "Ctrl+Alt+Right"
     hk_version: str = "Ctrl+Alt+V"
+    hk_report: str = "Ctrl+Alt+R"
 
     # ------------------------------------------------------------------
     @classmethod

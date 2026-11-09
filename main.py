@@ -262,6 +262,12 @@ def _schedule_frame_test(app, ctl, out):
         pstats.Stats(prof, stream=buf).sort_stats("tottime").print_stats(18)
         report["slowest"] = [ln.strip() for ln in buf.getvalue().splitlines() if ln.strip()][-20:]
         ov.grab().save(str(out).replace(".json", "-spotify.png"))
+        import shutil
+
+        from app.diagnostics import make_report
+        folder = make_report(ctl, "CI check", "CI test")
+        shutil.copy2(folder / "report.md", str(out).replace(".json", "-report.md"))
+        report["report_files"] = sorted(p.name for p in folder.iterdir())
         report["words_with_timing"] = bool(ov.lyrics and ov.lyrics.synced and any(ln.words for ln in ov.lyrics.lines))
         with open(out, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1)
@@ -352,6 +358,12 @@ def main() -> int:
     from app.controller import Controller
     ctl = Controller(app, demo=args.demo, demo_song=args.demo_song, demo_start=args.demo_start)
     log.info("Started (demo=%s)", args.demo)
+    first_hook = sys.excepthook
+
+    def excepthook_with_report(et, ev, tb):
+        first_hook(et, ev, tb)
+        ctl.auto_problem_report(f"unexpected error: {ev!r}")       # so there's a report to look at later
+    sys.excepthook = excepthook_with_report
 
     if args.screenshot or args.screen_grab:
         def snap():

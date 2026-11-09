@@ -157,6 +157,9 @@ jobs:
           Get-Content ci-frame-test.json
           $fr = Get-Content ci-frame-test.json -Raw | ConvertFrom-Json
           if ($fr.paint_errors.Count -gt 0) { throw "drawing errors: $($fr.paint_errors -join '; ')" }
+          Get-Content ci-frame-test-report.md
+          if (Select-String -Path ci-frame-test-report.md -Pattern "couldn't collect" -Quiet) { throw "a problem-report section failed" }
+          if (-not ($fr.report_files -contains "overlay.png")) { throw "problem report has no overlay picture" }
 
       - name: Pictures of the Settings window and a pop-up
         run: |
@@ -345,6 +348,7 @@ jobs:
             ci-ai-compare.txt
             ci-frame-test.json
             ci-frame-test-spotify.png
+            ci-frame-test-report.md
             ci-ai-hard-*.json
             ci-ai-max.txt
             ci-ai-max-*.json

@@ -281,3 +281,44 @@ def set_background_priority(on: bool) -> None:
         k32.SetPriorityClass(k32.GetCurrentProcess(), 0x4000 if on else 0x20)
     except Exception:
         pass
+
+
+def foreground_info() -> dict:
+    """Which app is in front right now (e.g. a game), and whether it covers the whole screen.
+    Only used for problem reports."""
+    if not IS_WINDOWS:
+        return {}
+    import ctypes
+    from ctypes import wintypes
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return {}
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(hwnd, buf, 256)
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    exe = ""
+    h = kernel32.OpenProcess(0x1000, False, pid.value)          # PROCESS_QUERY_LIMITED_INFORMATION
+    if h:
+        try:
+            pbuf = ctypes.create_unicode_buffer(520)
+            size = wintypes.DWORD(520)
+            if kernel32.QueryFullProcessImageNameW(h, 0, pbuf, ctypes.byref(size)):
+                exe = pbuf.value.rsplit("\\", 1)[-1]
+        finally:
+            kernel32.CloseHandle(h)
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+    mi = MONITORINFO()
+    mi.cbSize = ctypes.sizeof(MONITORINFO)
+    full = False
+    mon = user32.MonitorFromWindow(hwnd, 2)                      # MONITOR_DEFAULTTONEAREST
+    if mon and user32.GetMonitorInfoW(mon, ctypes.byref(mi)):
+        m = mi.rcMonitor
+        full = rect.left <= m.left and rect.top <= m.top and rect.right >= m.right and rect.bottom >= m.bottom
+    return {"app": exe, "title": buf.value[:80], "covers_whole_screen": full}
