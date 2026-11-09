@@ -45,7 +45,7 @@ ACTIONS = [
     ("hk_later", "This song: lyrics later", "Ctrl+Alt+Right"),
     ("hk_version", "Try another lyrics version", "Ctrl+Alt+V"),
     ("hk_report", "Save a problem report (for Claude)", "Ctrl+Alt+R"),
-    ("hk_mini", "Mini mode on / off", "Ctrl+Alt+M"),
+    ("hk_mini", "Small modes: off → 2 lines → 1 line", "Ctrl+Alt+M"),
 ]
 DEFAULTS = {field: default for field, _, default in ACTIONS}
 

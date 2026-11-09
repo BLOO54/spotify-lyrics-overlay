@@ -239,9 +239,20 @@ class Controller(QObject):
         self.act_ai = QAction("AI sync", self.menu, checkable=True)
         self.act_ai.setChecked(self.s.ai_sync_enabled)
         self.act_ai.toggled.connect(self.set_ai_enabled)
-        self.act_mini = QAction("Mini mode (just the current line)", self.menu, checkable=True)
-        self.act_mini.setChecked(self.s.mini_mode)
-        self.act_mini.toggled.connect(self.set_mini_mode)
+        from PySide6.QtGui import QActionGroup
+
+        from .sized_settings import SMALL_MODES
+        self.small_menu = QMenu("Small mode", self.menu)
+        self._small_group = QActionGroup(self.small_menu)
+        self._small_acts = {}
+        for key, (label, _, _) in SMALL_MODES.items():
+            act = QAction(label, self.small_menu, checkable=True)
+            act.setChecked(self.s.small_mode == key)
+            act.triggered.connect(lambda _=False, k=key: self.set_small_mode(k))
+            self._small_group.addAction(act)
+            self.small_menu.addAction(act)
+            self._small_acts[key] = act
+        self.act_mini = self.small_menu.menuAction()
         self.act_click = QAction("Click-through", self.menu, checkable=True)
         self.act_click.setChecked(self.s.click_through)
         self.act_click.toggled.connect(self.set_click_through)
@@ -285,7 +296,7 @@ class Controller(QObject):
                             "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
                             "hk_version": (act_version, "Try another lyrics version"),
                             "hk_report": (act_report, "Save a problem report…"),
-                            "hk_mini": (self.act_mini, "Mini mode (just the current line)")}
+                            "hk_mini": (self.act_mini, "Small mode")}
         self._label_menu()
         for a in (self.act_show, self.act_mini, self.act_click, self.act_ai, act_settings, act_meanings, act_full):
             self.menu.addAction(a)
@@ -391,29 +402,34 @@ class Controller(QObject):
         elif hid == HK_REPORT:
             self.save_problem_report()
         elif hid == HK_MINI:
-            self.set_mini_mode(not self.s.mini_mode)
+            self.cycle_small_mode()
 
     # ------------------------------------------------------------ actions
-    def set_mini_mode(self, on: bool):
-        """Mini mode: just the current line, a bit smaller, no title - covers less of a game."""
-        on = bool(on)
-        if self.act_mini.isChecked() != on:
-            self.act_mini.blockSignals(True)
-            self.act_mini.setChecked(on)
-            self.act_mini.blockSignals(False)
-        if self.s.mini_mode == on:
+    def cycle_small_mode(self):
+        from .sized_settings import CYCLE
+        cur = self.s.small_mode if self.s.small_mode in CYCLE else "off"
+        self.set_small_mode(CYCLE[(CYCLE.index(cur) + 1) % len(CYCLE)])
+
+    def set_small_mode(self, mode: str):
+        """Small modes cover less of a game: "small" = 2 lines, "tiny" = just the current line."""
+        from .sized_settings import SMALL_MODES
+        if mode not in SMALL_MODES:
+            mode = "off"
+        for key, act in self._small_acts.items():
+            if act.isChecked() != (key == mode):
+                act.blockSignals(True)
+                act.setChecked(key == mode)
+                act.blockSignals(False)
+        if self.s.small_mode == mode:
             return
-        self.s.mini_mode = on
+        self.s.small_mode = mode
         self.s.save()
         self.overlay.apply_settings()
-        if self.settings_dlg is not None and "mini_mode" in getattr(self.settings_dlg, "_w", {}):
-            w = self.settings_dlg._w["mini_mode"]
-            w.blockSignals(True)
-            w.setChecked(on)
-            w.blockSignals(False)
+        if self.settings_dlg is not None and hasattr(self.settings_dlg, "refresh"):
+            self.settings_dlg.refresh()
         keys = self.s.hk_mini
-        self.notify(("Mini mode on – just the current line." if on else "Mini mode off – normal size.")
-                    + (f" ({keys} to switch)" if keys else ""), "info", 1800)
+        text = {"off": "Normal overlay.", "small": "Small mode – 2 lines.", "tiny": "Tiny mode – just the current line."}
+        self.notify(text[mode] + (f" ({keys} to switch)" if keys else ""), "info", 1800)
 
     def set_visible(self, visible: bool):
         self.s.visible = bool(visible)
@@ -712,10 +728,11 @@ class Controller(QObject):
             self.menu.setStyleSheet("")
         self.act_click.setChecked(self.s.click_through)
         self.act_show.setChecked(self.s.visible)
-        if self.act_mini.isChecked() != self.s.mini_mode:
-            self.act_mini.blockSignals(True)
-            self.act_mini.setChecked(self.s.mini_mode)
-            self.act_mini.blockSignals(False)
+        for key, act in getattr(self, "_small_acts", {}).items():
+            if act.isChecked() != (key == self.s.small_mode):
+                act.blockSignals(True)
+                act.setChecked(key == self.s.small_mode)
+                act.blockSignals(False)
         if self.act_ai.isChecked() != self.s.ai_sync_enabled:
             self.act_ai.setChecked(self.s.ai_sync_enabled)
         if not self.demo:

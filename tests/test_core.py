@@ -623,7 +623,7 @@ def test_wipe_sweeps_continuously_through_the_line():
     assert abs(shown - 150.0) < 0.5
 
 
-def test_overall_size_and_mini_mode():
+def test_overall_size_and_small_modes():
     from app.config import Settings
     from app.sized_settings import SizedSettings
     s = Settings()
@@ -632,8 +632,10 @@ def test_overall_size_and_mini_mode():
     assert v.font_size == 30 and v.width == 400                      # 100%: unchanged
     s.size_scale = 0.5
     assert v.font_size == 15 and v.width == 200 and v.lines_shown == 3
-    s.mini_mode = True
-    assert v.font_size == 12 and v.lines_shown == 1 and v.show_title is False and v.time_display == "off"
+    s.small_mode = "small"
+    assert v.lines_shown == 2 and v.show_title is False and v.time_display == "off" and v.font_size == 13
+    s.small_mode = "tiny"
+    assert v.font_size == 12 and v.lines_shown == 1 and v.show_title is False
     v.fixed_height = 100                                             # what the overlay saves...
     assert s.fixed_height == 250                                     # ...is stored at full size
     assert s.font_size == 30 and s.lines_shown == 3                  # your own settings never change
@@ -642,3 +644,7 @@ def test_overall_size_and_mini_mode():
     s.size_scale = 9
     s.clamp()
     assert s.size_scale == 1.5
+    old = Settings()
+    old.mini_mode = True                                             # saved by version 1.26
+    old.clamp()
+    assert old.small_mode == "tiny" and old.mini_mode is False

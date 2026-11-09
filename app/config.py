@@ -51,7 +51,8 @@ class Settings:
     highlight_style: str = "wipe"        # see themes.HIGHLIGHT_STYLES
     line_transition: str = "scroll"      # how it moves to the next line - see themes.LINE_TRANSITIONS
     size_scale: float = 1.0              # shrink / grow the whole overlay (0.5 - 1.5)
-    mini_mode: bool = False              # just the current line, smaller, no title (quick toggle while gaming)
+    mini_mode: bool = False              # (old on/off switch - now "tiny" small mode)
+    small_mode: str = "off"              # "off" | "small" (2 lines, smaller) | "tiny" (1 line) - see sized_settings
     keep_sung_colored: bool = True       # sung words stay tinted (False = back to white)
     # Overall overlay design: "classic" | "aurora" | "hud" | "spotify"
     design: str = "classic"
@@ -217,6 +218,10 @@ class Settings:
             self.size_scale = min(1.5, max(0.5, float(self.size_scale)))
         except (TypeError, ValueError):
             self.size_scale = 1.0
+        if self.mini_mode:                   # from version 1.26: on = the 1-line mode
+            self.small_mode, self.mini_mode = "tiny", False
+        if self.small_mode not in ("off", "small", "tiny"):
+            self.small_mode = "off"
         from .themes import LINE_TRANSITIONS
         if self.line_transition not in LINE_TRANSITIONS:
             self.line_transition = "scroll"

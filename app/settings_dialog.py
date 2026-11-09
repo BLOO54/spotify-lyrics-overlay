@@ -491,10 +491,15 @@ class SettingsDialog(QDialog):
         self._w["size_scale"].slider.setSingleStep(5)
         self._w["size_scale"].slider.setPageStep(10)
         f.addRow("Overall size", self._w["size_scale"])
-        self._w["mini_mode"] = self._check("Mini mode – just the current line, smaller, no title", "mini_mode")
-        f.addRow(self._w["mini_mode"])
+        from .sized_settings import SMALL_MODES
+        self._w["small_mode"] = sm = QComboBox()
+        for key, (label, _, _) in SMALL_MODES.items():
+            sm.addItem(label, key)
+        sm.setCurrentIndex(max(0, sm.findData(self.s.small_mode)))
+        sm.currentIndexChanged.connect(lambda i: self._set("small_mode", sm.itemData(i)))
+        f.addRow("Small mode", sm)
         tip = QLabel("Overall size shrinks or grows everything together (text, width, title) without changing "
-                     "your other settings. Mini mode is quick to switch while gaming – see Shortcuts.")
+                     "your other settings. Small modes are quick to switch while gaming (Shortcuts: off → 2 lines → 1 line).")
         tip.setObjectName("rowSub")
         tip.setWordWrap(True)
         f.addRow(tip)

@@ -113,7 +113,8 @@ jobs:
             "ai-hud"         = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI_syncing","--ai-progress","0.8"); s = @{ design = "hud"; show_album_art = $false; time_display = "left"; ai_sync_enabled = $true } }
             "design-spotify" = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; match_album_highlight = $true } }
             "size-60"        = @{ song = "1";  at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; size_scale = 0.6 } }
-            "mini-mode"      = @{ song = "1";  at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; mini_mode = $true } }
+            "small-mode"     = @{ song = "1";  at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; lines_shown = 3; small_mode = "small" } }
+            "mini-mode"      = @{ song = "1";  at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; small_mode = "tiny" } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
