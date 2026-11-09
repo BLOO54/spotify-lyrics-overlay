@@ -106,3 +106,17 @@ def test_wikipedia_exact_page_first_and_musicbrainz_does_not_guess(monkeypatch):
                                                     {"id": "2", "name": "Nova", "score": 98}]}})
     assert A.musicbrainz_artist("Nova", twins) == {}                  # two artists called Nova: don't guess
     assert A._service_name("https://open.spotify.com/artist/x") == "Spotify"
+    assert A._service_name("https://us.napster.com/artist/x") == ""          # unknown services left out
+
+
+def test_busy_service_is_asked_again(monkeypatch):
+    import urllib.error
+    monkeypatch.setattr(A.time, "sleep", lambda s: None)
+    calls = []
+
+    def opener(req, timeout=0):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+        return io.BytesIO(json.dumps({"ok": 1}).encode())
+    assert A._Http(opener).json("https://musicbrainz.org/x") == {"ok": 1} and len(calls) == 2

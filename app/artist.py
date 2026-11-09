@@ -71,8 +71,15 @@ class _Http:
     def json(self, url: str, headers: dict | None = None):
         h = {"User-Agent": USER_AGENT, "Accept": "application/json"}
         h.update(headers or {})
-        with self._open(urllib.request.Request(url, headers=h), timeout=TIMEOUT) as r:
-            return json.loads(r.read().decode("utf-8"))
+        for attempt in range(3):
+            try:
+                with self._open(urllib.request.Request(url, headers=h), timeout=TIMEOUT) as r:
+                    return json.loads(r.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                if e.code in (429, 503) and attempt < 2:      # "too many requests": wait a moment, ask again
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                raise
 
 
 # --------------------------------------------------------------------------- Genius
@@ -182,7 +189,7 @@ def _service_name(url: str) -> str:
                       ("soundcloud", "SoundCloud"), ("bandcamp", "Bandcamp")):
         if key in host:
             return name
-    return host.removeprefix("www.") or "Streaming"
+    return ""
 
 
 def musicbrainz_artist(artist: str, http: _Http | None = None) -> dict:
@@ -224,6 +231,8 @@ def musicbrainz_artist(artist: str, http: _Http | None = None) -> dict:
         url = ((rel.get("url") or {}).get("resource")) or ""
         if label == "Streaming":
             label = _service_name(url)
+            if not label:
+                continue                 # only the well-known streaming services
         if label and url and label not in seen:
             seen.add(label)
             links.append((label, url))
@@ -289,7 +298,8 @@ def about_artist(artist: str, song_title: str = "", genius_token: str = "", cach
         if url:
             links.append((label, url))
     seen = set()
-    info.links = [(lbl, u) for lbl, u in links if not (u in seen or seen.add(u))]
+    info.links = [(lbl, u) for lbl, u in links if not (u in seen or lbl in seen or seen.add(u) or seen.add(lbl))]
+    info.links = info.links[:10]
     if path and info.found and not info.problems:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
