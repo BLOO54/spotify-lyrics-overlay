@@ -181,7 +181,7 @@ jobs:
       - name: Pictures of the Settings window and a pop-up
         run: |
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
-          foreach ($what in "settings", "toast", "history", "meanings", "meanings-large", "meanings-search", "synced", "reset", "fullscreen", "aiwindow", "artist") {
+          foreach ($what in "settings", "toast", "history", "meanings", "meanings-large", "meanings-search", "synced", "reset", "fullscreen", "aiwindow", "artist", "settings-artist") {
             $wait = if ($what -eq "meanings-search") { "8.5" } elseif ($what -like "meanings*") { "6" } else { "4.5" }
             $p = Start-Process $exe -ArgumentList "--demo","--demo-start","6","--ui-shot",$what,"$PWD\demo-overlay-ui-$what.png","--quit-after",$wait -PassThru
             $null = $p.WaitForExit(60000)

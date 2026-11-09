@@ -255,7 +255,7 @@ class AiSyncWindow(QWidget):
         self.ctl.open_settings()
         dlg = self.ctl.settings_dlg
         if dlg is not None:
-            dlg.nav.setCurrentRow(2)          # Lyrics & translation (where the AI sync settings are)
+            dlg.show_page("AI sync")
 
     # ------------------------------------------------------------------ refresh
     def refresh(self):

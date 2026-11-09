@@ -212,6 +212,7 @@ class SettingsDialog(QDialog):
     capture_started = Signal()     # a shortcut button is waiting for keys
     capture_finished = Signal()    # done - shortcuts should be registered again
     check_updates_requested = Signal()
+    page_opened = Signal(str)       # the name of the page that was just shown
     tap_sync_requested = Signal()
     lyrics_folder_requested = Signal()
     update_requested = Signal()
@@ -291,10 +292,12 @@ class SettingsDialog(QDialog):
             ("AI sync", "What the AI is doing, what it needs, and which lines it heard", self._ai_tab()),
             ("Song meanings", "What the lyrics mean – from Genius, with an optional AI backup",
              self._meanings_tab()),
+            ("About the artist", "Photo, bio, facts and popular songs – for the artist playing now, or any artist",
+             self._artist_tab()),
             ("Synced songs", "Songs you or AI sync have timed – remove any you don't like", self._synced_tab()),
             ("Notifications", "Past pop-ups: songs synced, model downloads and saved timing", self._history_tab()),
         ]
-        icons = ["◐", "▦", "♫", "⚙", "⌨", "✦", "💬", "⏱", "🔔"]
+        icons = ["◐", "▦", "♫", "⚙", "⌨", "✦", "💬", "🎤", "⏱", "🔔"]
         self._pages = pages
         for (name, sub, widget), icon in zip(pages, icons):
             self.nav.addItem(QListWidgetItem(f"{icon}   {name}"))
@@ -344,6 +347,21 @@ class SettingsDialog(QDialog):
             self.stack.setCurrentIndex(row)
             self.page_title.setText(self._pages[row][0])
             self.page_sub.setText(self._pages[row][1])
+            self.page_opened.emit(self._pages[row][0])
+
+    def show_page(self, name: str):
+        """Switch to a page by its name (e.g. "AI sync")."""
+        for i, page in enumerate(getattr(self, "_pages", [])):
+            if page[0] == name:
+                self.nav.setCurrentRow(i)
+                return
+
+    def _artist_tab(self):
+        """Filled in by the app with the About-the-artist view (it needs the app to look things up)."""
+        w = QWidget()
+        self.artist_holder = QVBoxLayout(w)
+        self.artist_holder.setContentsMargins(0, 0, 0, 0)
+        return w
 
     def set_preview_source(self, fn):
         """fn() returns a QPixmap of the real overlay - shown live at the top of the window."""

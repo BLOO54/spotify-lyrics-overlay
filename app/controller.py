@@ -151,6 +151,7 @@ class Controller(QObject):
         self.history = NotificationLog(app_data_dir() / "notifications.json")
         self.meanings_win = None
         self.artist_win = None
+        self.settings_artist = None
         self._rematching_all = False
         self.ai_store = ai_sync.ModelStore()
         self.ai_listener = None
@@ -545,6 +546,12 @@ class Controller(QObject):
             self.settings_dlg.ai_window_requested.connect(self.open_ai_window)
             self.settings_dlg.fullscreen_requested.connect(self.open_fullscreen)
             self.settings_dlg.synced_wanted.connect(self._refresh_synced)
+            # the "About the artist" page: the same view as the separate window, inside Settings
+            from .artist_window import ArtistWindow
+            self.settings_artist = ArtistWindow(self)
+            self.settings_artist.setMinimumSize(0, 0)
+            self.settings_dlg.artist_holder.addWidget(self.settings_artist)
+            self.settings_dlg.page_opened.connect(self._settings_page_opened)
             self.settings_dlg.synced_remove_requested.connect(self.remove_synced)
             self.settings_dlg.synced_remove_all_requested.connect(self.remove_synced_many)
             self.settings_dlg.show_history(self.history.newest_first())
@@ -1316,6 +1323,14 @@ class Controller(QObject):
         self._refresh_ai_status()
 
     # ------------------------------------------------------------ song meanings
+    def _settings_page_opened(self, name: str):
+        if name != "About the artist":
+            return
+        w = self.settings_artist
+        if self.track and self.track.artist and (w.info is None or w.info.name.lower() not in
+                                                 self.track.artist.lower()):
+            w.show_now_playing()
+
     def open_artist(self):
         """About the artist: photo, bio, facts, popular songs and links for the artist playing now."""
         if self.artist_win is None:

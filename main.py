@@ -457,14 +457,19 @@ def main() -> int:
                 ctl.history.add("AI sync: “Loud Song” – only heard 6 of 40 lines clearly - kept the normal timing.", "info")
                 ctl.history.add("AI sync is ready. It learns each song the first time it plays to the end.", "success")
                 ctl.open_settings()
-                ctl.settings_dlg.nav.setCurrentRow(8)
+                ctl.settings_dlg.show_page("Notifications")
             QTimer.singleShot(1500, fill)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
-        elif what == "artist":
+        elif what in ("artist", "settings-artist"):
             def fill():
                 from app.artist import ArtistInfo
-                ctl.open_artist()
-                win = ctl.artist_win
+                if what == "artist":
+                    ctl.open_artist()
+                    win = ctl.artist_win
+                else:
+                    ctl.open_settings()
+                    ctl.settings_dlg.show_page("About the artist")
+                    win = ctl.settings_artist
                 win._req += 1
                 info = ArtistInfo(
                     "Neon Horizon", tagline="synthwave duo",
@@ -481,7 +486,8 @@ def main() -> int:
                     followers=4210, sources=["Genius", "MusicBrainz"])
                 win._on_done(win._req, info)
             QTimer.singleShot(1500, fill)
-            QTimer.singleShot(3200, lambda: ctl.artist_win and ctl.artist_win.grab().save(file))
+            QTimer.singleShot(3200, lambda: (ctl.artist_win.grab() if what == "artist"
+                                             else ctl.settings_dlg.grab()).save(file))
         elif what in ("meanings", "meanings-large"):
             def fill():
                 from app.meanings import Explanation, SongHit, SongMeanings
