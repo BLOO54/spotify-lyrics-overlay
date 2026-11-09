@@ -345,6 +345,8 @@ def main() -> int:
     parser.add_argument("--ai-progress", type=float, help="CI: progress (0-1) shown with --ai-note")
     parser.add_argument("--listen-test", help="CI: try recording the PC's sound, report to FILE")
     parser.add_argument("--frame-test", help="CI: measure how evenly the lyrics are drawn, report to FILE")
+    parser.add_argument("--artist-test", nargs=2, metavar=("ARTIST", "OUT"),
+                        help="CI: look an artist up on Wikipedia + MusicBrainz, report to OUT")
     parser.add_argument("--app-audio-probe", nargs=2, metavar=("PID", "OUT"),
                         help="check that one app's sound can be recorded (used by AI sync)")
     args, _ = parser.parse_known_args()
@@ -366,6 +368,16 @@ def main() -> int:
     if args.listen_test:
         from app.ai_sync import listen_test
         return listen_test(args.listen_test)
+    if args.artist_test:
+        import json
+        from dataclasses import asdict
+
+        from app.artist import about_artist
+        name, out = args.artist_test
+        info = about_artist(name, "", "", None)
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(asdict(info), fh, indent=1, ensure_ascii=False)
+        return 0 if info.found else 1
 
     if args.self_test:
         return self_test(args.report)
@@ -448,6 +460,28 @@ def main() -> int:
                 ctl.settings_dlg.nav.setCurrentRow(8)
             QTimer.singleShot(1500, fill)
             QTimer.singleShot(3200, lambda: ctl.settings_dlg and ctl.settings_dlg.grab().save(file))
+        elif what == "artist":
+            def fill():
+                from app.artist import ArtistInfo
+                ctl.open_artist()
+                win = ctl.artist_win
+                win._req += 1
+                info = ArtistInfo(
+                    "Neon Horizon", tagline="synthwave duo",
+                    bio_html="<p>Neon Horizon is a demo synthwave duo made for Spotify Lyrics Overlay. Their songs "
+                             "are about late-night gaming sessions, neon cities and never giving up on the final "
+                             "boss.</p><p>They first appeared in the app's demo mode in 2026.</p>",
+                    bio_source="Genius", bio_url="https://genius.com",
+                    facts=[("Type", "Group"), ("From", "Night City"), ("Started", "2026")],
+                    genres=["synthwave", "electropop"],
+                    popular=[("Neon Horizon", "https://genius.com", 1_250_000), ("Final Boss", "https://genius.com",
+                             84_000), ("Pixel Rain", "https://genius.com", 9_100)],
+                    links=[("YouTube", "https://youtube.com"), ("Website", "https://example.com"),
+                           ("Genius", "https://genius.com"), ("Wikipedia", "https://wikipedia.org")],
+                    followers=4210, sources=["Genius", "MusicBrainz"])
+                win._on_done(win._req, info)
+            QTimer.singleShot(1500, fill)
+            QTimer.singleShot(3200, lambda: ctl.artist_win and ctl.artist_win.grab().save(file))
         elif what in ("meanings", "meanings-large"):
             def fill():
                 from app.meanings import Explanation, SongHit, SongMeanings

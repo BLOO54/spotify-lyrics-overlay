@@ -228,6 +228,11 @@ Crossfade off (Spotify → Settings → Playback → Crossfade songs). The AI wi
 the AI listens to just that song (from the start) and pauses Spotify when it ends so nothing else plays. The heard / missed list is saved
 for songs synced from version 1.18 on.
 
+### 🎤 About the artist
+Tray menu → **About the artist…**: a photo, a short bio, facts (where they're from, when they started, genres),
+their popular songs and links - for the artist playing now, or search any artist. It uses Genius (with the token
+from Settings → Song meanings), Wikipedia and MusicBrainz; all free, official APIs, cached for a week.
+
 ### 🔎 Smaller overlay / small modes
 Settings → **Layout** → **Overall size** shrinks or grows the whole overlay (50%–150%) - text, width and title
 together - without changing your other settings. **Small mode** covers less of a game: *Small* shows 2 lines

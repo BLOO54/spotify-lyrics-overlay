@@ -151,6 +151,20 @@ jobs:
           Get-Content $file.FullName | Tee-Object -FilePath ci-tap-check.txt -Append
           if (-not (Test-Path demo-overlay-tap-window.png)) { throw "no picture of the sync window" }
 
+      - name: About the artist - live lookup on Wikipedia + MusicBrainz
+        continue-on-error: true
+        run: |
+          $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
+          foreach ($who in "Jamie Paige", "Kasane Teto", "Daft Punk") {
+            $out = "$PWD\ci-artist-$($who -replace ' ','-').json"
+            $p = Start-Process $exe -ArgumentList "--artist-test","`"$who`"",$out -PassThru
+            if (-not $p.WaitForExit(90000)) { Stop-Process $p -Force; "$who : timed out" | Tee-Object -FilePath ci-artist.txt -Append; continue }
+            if (Test-Path $out) {
+              $r = Get-Content $out -Raw | ConvertFrom-Json
+              "$who : name=$($r.name) | sources=$($r.sources -join ',') | problems=$($r.problems -join ',') | tagline=$($r.tagline) | facts=$(($r.facts | ForEach-Object { $_ -join ': ' }) -join '; ') | genres=$($r.genres -join ', ') | links=$(($r.links | ForEach-Object { $_[0] }) -join ', ') | bio=$($r.bio_source) $($r.bio_html.Length) chars | photo=$($r.photo_url)" | Tee-Object -FilePath ci-artist.txt -Append
+            } else { "$who : no report" | Tee-Object -FilePath ci-artist.txt -Append }
+          }
+
       - name: Frame rhythm - how evenly the lyrics are drawn (normal vs precise timer)
         run: |
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
@@ -167,7 +181,7 @@ jobs:
       - name: Pictures of the Settings window and a pop-up
         run: |
           $exe = "dist\SpotifyLyricsOverlay\SpotifyLyricsOverlay.exe"
-          foreach ($what in "settings", "toast", "history", "meanings", "meanings-large", "meanings-search", "synced", "reset", "fullscreen", "aiwindow") {
+          foreach ($what in "settings", "toast", "history", "meanings", "meanings-large", "meanings-search", "synced", "reset", "fullscreen", "aiwindow", "artist") {
             $wait = if ($what -eq "meanings-search") { "8.5" } elseif ($what -like "meanings*") { "6" } else { "4.5" }
             $p = Start-Process $exe -ArgumentList "--demo","--demo-start","6","--ui-shot",$what,"$PWD\demo-overlay-ui-$what.png","--quit-after",$wait -PassThru
             $null = $p.WaitForExit(60000)
@@ -350,6 +364,7 @@ jobs:
             ci-x-check.txt
             ci-ai-compare.txt
             ci-frame-test.json
+            ci-artist.txt
             ci-frame-test-spotify.png
             ci-frame-test-report.md
             ci-frame-test-transition-*.png

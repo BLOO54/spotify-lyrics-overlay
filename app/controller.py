@@ -148,6 +148,7 @@ class Controller(QObject):
         self.song_sync_ai = SongSync(app_data_dir() / "song_sync_ai.json")
         self.history = NotificationLog(app_data_dir() / "notifications.json")
         self.meanings_win = None
+        self.artist_win = None
         self.ai_store = ai_sync.ModelStore()
         self.ai_listener = None
         self.ai_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai")
@@ -273,6 +274,8 @@ class Controller(QObject):
         act_full = QAction("Full-screen lyrics", self.menu)
         act_full.triggered.connect(self.open_fullscreen)
         self.act_full = act_full
+        act_artist = QAction("About the artist…", self.menu)
+        act_artist.triggered.connect(self.open_artist)
         act_meanings = QAction("Song meanings…", self.menu)
         act_meanings.triggered.connect(self.open_meanings)
         self.act_meanings = act_meanings
@@ -298,7 +301,8 @@ class Controller(QObject):
                             "hk_report": (act_report, "Save a problem report…"),
                             "hk_mini": (self.act_mini, "Small mode")}
         self._label_menu()
-        for a in (self.act_show, self.act_mini, self.act_click, self.act_ai, act_settings, act_meanings, act_full):
+        for a in (self.act_show, self.act_mini, self.act_click, self.act_ai, act_settings, act_meanings, act_artist,
+                  act_full):
             self.menu.addAction(a)
         self.menu.addSeparator()
         for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
@@ -1249,6 +1253,19 @@ class Controller(QObject):
         self._refresh_ai_status()
 
     # ------------------------------------------------------------ song meanings
+    def open_artist(self):
+        """About the artist: photo, bio, facts, popular songs and links for the artist playing now."""
+        if self.artist_win is None:
+            from .artist_window import ArtistWindow
+            self.artist_win = ArtistWindow(self)
+        win = self.artist_win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        if self.track and self.track.artist and (win.info is None or win.info.name.lower() not in
+                                                 self.track.artist.lower()):
+            win.show_now_playing()
+
     def open_meanings(self):
         if self.meanings_win is None:
             from .meanings_window import MeaningsWindow
