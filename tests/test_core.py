@@ -633,7 +633,7 @@ def test_overall_size_and_mini_mode():
     s.size_scale = 0.5
     assert v.font_size == 15 and v.width == 200 and v.lines_shown == 3
     s.mini_mode = True
-    assert v.font_size == 12 and v.lines_shown == 1 and v.show_title is False
+    assert v.font_size == 12 and v.lines_shown == 1 and v.show_title is False and v.time_display == "off"
     v.fixed_height = 100                                             # what the overlay saves...
     assert s.fixed_height == 250                                     # ...is stored at full size
     assert s.font_size == 30 and s.lines_shown == 3                  # your own settings never change

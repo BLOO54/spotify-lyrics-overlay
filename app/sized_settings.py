@@ -9,7 +9,8 @@ from __future__ import annotations
 
 SCALED = ("font_size", "side_font_size", "title_font_size", "width", "fixed_height", "corner_radius")
 MINI_SCALE = 0.8
-MINI_OVERRIDES = {"lines_shown": 1, "show_title": False, "show_progress": False, "show_album_art": False}
+MINI_OVERRIDES = {"lines_shown": 1, "show_title": False, "show_progress": False, "show_album_art": False,
+                  "time_display": "off"}
 
 
 class SizedSettings:
