@@ -12,7 +12,9 @@ _PLAIN = {"show_title": False, "show_progress": False, "show_album_art": False, 
 SMALL_MODES = {
     # name: (label, size, settings it changes)
     "off": ("Off – normal overlay", 1.0, {}),
-    "small": ("Small – 2 lines (current + next), no title", 0.85, {"lines_shown": 2, **_PLAIN}),
+    "small": ("Small – 2 lines (current + next), slim song name and time", 0.85,
+              {"lines_shown": 2, "show_title": True, "show_progress": False, "show_album_art": False,
+               "compact_header": True}),
     "tiny": ("Tiny – just the current line", 0.8, {"lines_shown": 1, **_PLAIN}),
 }
 CYCLE = ("off", "small", "tiny")
@@ -34,6 +36,8 @@ class SizedSettings:
         over = self._mode()[2]
         if name in over:
             return over[name]
+        if name == "time_display" and over.get("compact_header") and getattr(b, name) == "off":
+            return "left"                    # the slim small-mode row always shows the time
         v = getattr(b, name)
         if name in SCALED and isinstance(v, (int, float)) and not isinstance(v, bool):
             sc = self.scale()

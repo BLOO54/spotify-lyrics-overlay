@@ -464,6 +464,8 @@ class OverlayWindow(QWidget):
         self._rows = []
         if self._header_needed():
             head_h = QFontMetricsF(head).height() * (2.7 if self.design == "spotify" else 1.6)
+            if getattr(self.s, "compact_header", False):
+                head_h = QFontMetricsF(head).height() * 1.45        # small mode: one slim row
             if self._art_mode() == "header" and self._art_bytes:
                 head_h = max(head_h, self._header_art_side() + 8)    # room for the cover
             self._rows.append(("header", head_h))
@@ -1071,6 +1073,8 @@ class OverlayWindow(QWidget):
         p.drawRoundedRect(rect, radius, radius)
 
     def _paint_header(self, p: QPainter, f: QFont, row, area):
+        if getattr(self.s, "compact_header", False):
+            return self._header_compact(p, f, row, area)
         if self.design == "spotify":
             return self._header_spotify(p, f, row, area)
         y, row_h = row
@@ -1134,6 +1138,39 @@ class OverlayWindow(QWidget):
             text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(30.0, right_edge - x))
             p.setPen(_qc(self._c("text_color"), 0.72))
             p.drawText(QPointF(x, base), text)
+
+    def _header_compact(self, p: QPainter, f: QFont, row, area):
+        """Small mode: one slim row - the song on the left, the time on the right."""
+        y, row_h = row
+        left, right = area
+        x = left + self._pad * 0.4
+        right -= self._pad * 0.4
+        title_f = QFont(f)
+        title_f.setBold(True)
+        sub_f = QFont(f)
+        sub_f.setBold(False)
+        tfm, sfm = QFontMetricsF(title_f), QFontMetricsF(sub_f)
+        base = y + row_h / 2 + tfm.ascent() / 2 - 1
+        t = self.time_text()
+        if t:
+            p.setFont(sub_f)
+            p.setPen(QColor(255, 255, 255, 170))
+            tw = sfm.horizontalAdvance(t)
+            p.drawText(QPointF(right - tw, base), t)
+            right -= tw + 12
+        if not self.s.show_title:
+            return
+        room = max(30.0, right - x)
+        title = tfm.elidedText(self.title or "Spotify Lyrics Overlay", Qt.TextElideMode.ElideRight, room)
+        p.setFont(title_f)
+        p.setPen(QColor(255, 255, 255, 225))
+        p.drawText(QPointF(x, base), title)
+        rest = room - tfm.horizontalAdvance(title)
+        if self.artist and title == (self.title or "") and rest > 40:
+            p.setFont(sub_f)
+            p.setPen(QColor(255, 255, 255, 140))
+            p.drawText(QPointF(x + tfm.horizontalAdvance(title), base),
+                       sfm.elidedText(f"  ·  {self.artist}", Qt.TextElideMode.ElideRight, rest))
 
     def _header_spotify(self, p: QPainter, f: QFont, row, area):
         """Album art + title on top, artist underneath, time on the right - like Spotify's now-playing."""

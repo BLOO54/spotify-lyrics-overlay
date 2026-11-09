@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.27.0.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.27.1.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.27.0.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.27.1.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -231,8 +231,8 @@ for songs synced from version 1.18 on.
 ### 🔎 Smaller overlay / small modes
 Settings → **Layout** → **Overall size** shrinks or grows the whole overlay (50%–150%) - text, width and title
 together - without changing your other settings. **Small mode** covers less of a game: *Small* shows 2 lines
-(the current one and the next), *Tiny* just the current line - both a bit smaller, without the title, time or
-progress bar. Switch with the tray menu, Settings → Layout, or **Ctrl+Alt+M** (off → 2 lines → 1 line → off).
+(the current one and the next) under one slim row with the song name and time, *Tiny* just the current line -
+both a bit smaller, without album art or progress bar. Switch with the tray menu, Settings → Layout, or **Ctrl+Alt+M** (off → 2 lines → 1 line → off).
 
 ### 🩺 Problem reports (for Claude)
 When something looks wrong, press **Ctrl+Alt+R** (change it in Settings → Shortcuts) or use the tray menu →

@@ -633,9 +633,14 @@ def test_overall_size_and_small_modes():
     s.size_scale = 0.5
     assert v.font_size == 15 and v.width == 200 and v.lines_shown == 3
     s.small_mode = "small"
-    assert v.lines_shown == 2 and v.show_title is False and v.time_display == "off" and v.font_size == 13
+    assert v.lines_shown == 2 and v.show_title is True and v.compact_header is True and v.font_size == 13
+    s.time_display = "off"
+    assert v.time_display == "left" and v.show_album_art is False and v.show_progress is False
+    s.time_display = "elapsed"
+    assert v.time_display == "elapsed"
     s.small_mode = "tiny"
-    assert v.font_size == 12 and v.lines_shown == 1 and v.show_title is False
+    assert v.font_size == 12 and v.lines_shown == 1 and v.show_title is False and v.time_display == "off"
+    assert getattr(v, "compact_header", False) is False
     v.fixed_height = 100                                             # what the overlay saves...
     assert s.fixed_height == 250                                     # ...is stored at full size
     assert s.font_size == 30 and s.lines_shown == 3                  # your own settings never change
