@@ -349,7 +349,7 @@ jobs:
             ci-frame-test.json
             ci-frame-test-spotify.png
             ci-frame-test-report.md
-            ci-frame-test-transition.png
+            ci-frame-test-transition-*.png
             ci-frame-test-wipe.png
             ci-ai-hard-*.json
             ci-ai-max.txt

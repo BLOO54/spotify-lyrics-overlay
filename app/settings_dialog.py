@@ -438,6 +438,13 @@ class SettingsDialog(QDialog):
         hs.setCurrentIndex(list(HIGHLIGHT_STYLES).index(self.s.highlight_style))
         hs.currentIndexChanged.connect(lambda i: self._set("highlight_style", hs.itemData(i)))
         f.addRow("Highlight style", hs)
+        from .themes import LINE_TRANSITIONS
+        self._w["line_transition"] = lt = QComboBox()
+        for key, label in LINE_TRANSITIONS.items():
+            lt.addItem(label, key)
+        lt.setCurrentIndex(max(0, lt.findData(self.s.line_transition)))
+        lt.currentIndexChanged.connect(lambda i: self._set("line_transition", lt.itemData(i)))
+        f.addRow("Next line", lt)
         self._w["glow"] = self._check("Glow around highlighted words", "glow")
         f.addRow(self._w["glow"])
         self._w["keep_sung_colored"] = self._check("Keep sung words coloured", "keep_sung_colored")

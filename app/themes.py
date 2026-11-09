@@ -11,6 +11,14 @@ HIGHLIGHT_STYLES = {
     "underline": "Underline – bar slides under the word",
 }
 
+LINE_TRANSITIONS = {
+    "scroll": "Smooth scroll – lines slide up together (like Spotify)",
+    "fade": "Quick fade – lines stay put, the text fades over",
+    "slide": "Snappy slide – the older, quicker slide-up",
+    "grow": "Rise and grow – old line fades, next one rises and grows",
+    "instant": "Instant – no animation",
+}
+
 # Every setting a theme controls
 THEME_KEYS = ("font_family", "bold", "text_color", "highlight_color", "highlight_color2",
               "background_color", "background_opacity", "show_background", "glow", "highlight_style")

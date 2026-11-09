@@ -270,21 +270,25 @@ def _schedule_frame_test(app, ctl, out):
         ly = ov.lyrics
         if ly and ly.synced:
             idx = ly.line_index_at(ov.position)
-            shots = []
-            for frac in (0.0, 0.15, 0.3, 0.5, 0.7, 1.0):
-                ov._line_idx = idx - 1                       # pretend the line just changed
-                ov.grab()                                    # this drawing starts the change...
-                ov._anim_start = _t.monotonic() - frac * LINE_ANIM_SECONDS
-                shots.append(ov.grab())                      # ...and this one shows it at `frac`
-            strip = QPixmap(shots[0].width(), sum(s.height() for s in shots) + 6 * len(shots))
-            strip.fill()
-            sp = QPainter(strip)
-            y = 0
-            for s in shots:
-                sp.drawPixmap(0, y, s)
-                y += s.height() + 6
-            sp.end()
-            strip.save(str(out).replace(".json", "-transition.png"))
+            for style in ("scroll", "fade", "slide", "grow"):
+                ctl.s.line_transition = style
+                shots = []
+                for frac in (0.0, 0.15, 0.3, 0.5, 0.7, 1.0):
+                    ov._line_idx = idx - 1                   # pretend the line just changed
+                    ov.grab()                                # this drawing starts the change...
+                    dur = {"scroll": 0.42, "fade": 0.3, "slide": 0.28}.get(style, LINE_ANIM_SECONDS)
+                    ov._anim_start = _t.monotonic() - frac * dur
+                    shots.append(ov.grab())                  # ...and this one shows it at `frac`
+                strip = QPixmap(shots[0].width(), sum(s.height() for s in shots) + 6 * len(shots))
+                strip.fill()
+                sp = QPainter(strip)
+                y = 0
+                for s in shots:
+                    sp.drawPixmap(0, y, s)
+                    y += s.height() + 6
+                sp.end()
+                strip.save(str(out).replace(".json", f"-transition-{style}.png"))
+            ctl.s.line_transition = "scroll"
             # the wipe in real time: 8 pictures 0.1 s apart, cut to the lyric line
             ctl.clock.reset(ly.lines[idx].start + 0.3, True)
             ov._line_idx = idx

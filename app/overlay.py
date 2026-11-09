@@ -1223,87 +1223,150 @@ class OverlayWindow(QWidget):
 
         t = self.position
         idx = ly.line_index_at(t)
+        style = getattr(self.s, "line_transition", "scroll")
+        dur = {"scroll": 0.42, "fade": 0.3, "slide": 0.28, "grow": LINE_ANIM_SECONDS}.get(style, 0.0)
         if idx != self._line_idx:
             # forward by one line: animate; a jump / seek just cuts to the new place
             self._fade_from = self._line_idx if idx == self._line_idx + 1 else None
             self._line_idx = idx
-            self._anim_start = time.monotonic() if self._fade_from is not None else 0.0
-        # One line change, in turns so nothing sits on top of anything else:
-        #   1. the old line fades out quickly as it drifts up (first ~third)
-        #   2. the next line moves up into place and grows to full size (the whole time)
-        #   3. only then does the new "next" line fade in underneath (last ~half)
-        r = _clamp01((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
-        move = _glide(r)
-        old_alpha = 1.0 - _ease(r / 0.35)
-        late_in = _ease((r - 0.5) / 0.5)             # things that appear after the line has moved
-        mid_in = _ease((r - 0.25) / 0.75)
+            self._anim_start = time.monotonic() if (self._fade_from is not None and dur > 0) else 0.0
+        r = _clamp01((time.monotonic() - self._anim_start) / dur) if dur > 0 else 1.0
+        if self._fade_from is None:
+            r = 1.0
         lines = ly.lines
-        has_next = "next" in rows
-        rise = (cy("next") - cy("main")) if has_next else self._ctx_h * 0.8
-        main_offset = (1 - move) * rise               # the new line starts where "next" was
+        left, right = area
+        has_prev, has_next = "prev" in rows, "next" in rows
+        y_main = cy("main")
+        step = (cy("next") - y_main) if has_next else self._ctx_h * 1.2
+        y_next = cy("next") if has_next else y_main + step
+        y_prev = cy("prev") if has_prev else y_main - step
+        small = min(1.0, ctx_f.pixelSize() / max(main_f.pixelSize(), 1))
+        ax = left + self._pad * 0.4 if self._align_left() else (left + right) / 2
+        soft = self.design == "aurora"
+        sung = self._line_colours(1.0)[3]
 
-        if "prev" in rows and idx - 1 >= 0:
-            self._paint_simple_line(p, ctx_f, self._main_text(idx - 1), cy("prev") + (1 - move) * self._ctx_h * 0.5,
-                                    self._side_colour("prev", mid_in), area, self._row_caps["prev"],
-                                    soft=self.design == "aurora")
-        if has_next and idx + 1 < len(lines):
-            self._paint_simple_line(p, ctx_f, self._main_text(idx + 1) or "♪",
-                                    cy("next") + (1 - late_in) * self._ctx_h * 0.35,
-                                    self._side_colour("next", late_in), area, self._row_caps["next"],
-                                    soft=self.design == "aurora")
+        def text(i):
+            return (self._main_text(i) or "♪") if 0 <= i < len(lines) else ""
 
-        if idx >= 0 and not lines[idx].is_break and "trans" in rows and self.extras is None \
-                and self.translation_pending:
-            tf = QFont(extra_f)
-            tf.setItalic(True)
-            self._paint_simple_line(p, tf, "translating…", cy("trans") + main_offset * 0.3,
-                                    _qc(text_col, 0.45 * mid_in * self._pulse() / 0.7), area, 1)
-        if idx >= 0 and not lines[idx].is_break and self.extras is not None:
-            if "romaji" in rows:
-                self._paint_simple_line(p, extra_f, self.extras.romaji.get(idx, ""), cy("romaji") + main_offset * 0.3,
-                                        _qc(text_col, 0.72 * mid_in), area, MAX_SIDE_ROWS)
-            if "trans" in rows:
-                tf = QFont(extra_f)
-                if self._swap():
-                    col = _qc(text_col, 0.7)              # the original lyrics, small and calm
-                else:
-                    tf.setItalic(True)
-                    col = _with_alpha(_mix(_qc(text_col), _qc(self._c("highlight_color2")), 0.35), 0.9)
-                self._paint_simple_line(p, tf, self._under_text(idx), cy("trans") + main_offset * 0.3,
-                                        _with_alpha(col, col.alphaF() * mid_in), area, MAX_SIDE_ROWS)
+        def side(i, y, which, alpha):
+            if 0 <= i < len(lines) and alpha > 0.01:
+                self._paint_simple_line(p, ctx_f, text(i), y, self._side_colour(which, alpha), area,
+                                        self._row_caps[which], soft=soft)
 
-        old = self._fade_from
-        if old_alpha > 0.01 and old is not None and 0 <= old < len(lines) and not lines[old].is_break:
-            sung = self._line_colours(1.0)[3]
-            self._paint_simple_line(p, main_f, self._main_text(old), cy("main") - move * self._ctx_h * 0.9,
-                                    _with_alpha(sung, 0.85 * old_alpha), area, self._row_caps["main"])
-
-        if idx < 0:
-            remaining = max(0.0, (lines[0].start if lines else 0) - t)
-            dots = "♪  ♪  ♪" if remaining > 1.0 else "♪"
-            self._paint_simple_line(p, main_f, dots, cy("main"), _qc(text_col, self._pulse()), area)
-            return
-        line = lines[idx]
-        if line.is_break:
-            self._paint_simple_line(p, main_f, "♪  ♪  ♪", cy("main") + main_offset,
-                                    _qc(text_col, self._pulse() * (0.5 + 0.5 * move)), area)
-            return
-        # the new line grows from the "next" line's size to full size as it moves up
-        grow = 1.0
-        if move < 1.0 and main_f.pixelSize() > 0:
-            small = min(1.0, ctx_f.pixelSize() / main_f.pixelSize())
-            grow = small + (1.0 - small) * move
-        y = cy("main") + main_offset
-        if grow < 0.999:
-            left, right = area
-            ax = left + self._pad * 0.4 if self._align_left() else (left + right) / 2
+        def scaled(y, scale, draw):
+            if abs(scale - 1.0) < 0.001:
+                draw()
+                return
             p.save()
             p.translate(ax, y)
-            p.scale(grow, grow)
+            p.scale(scale, scale)
             p.translate(-ax, -y)
-        self._paint_karaoke_line(p, main_f, self._main_line(idx), t, y, 0.55 + 0.45 * move, area)
-        if grow < 0.999:
+            draw()
             p.restore()
+
+        def old_line(y, alpha, scale=1.0):
+            o = self._fade_from
+            if alpha > 0.01 and o is not None and 0 <= o < len(lines) and not lines[o].is_break:
+                scaled(y, scale, lambda: self._paint_simple_line(p, main_f, self._main_text(o), y,
+                                                                 _with_alpha(sung, 0.85 * alpha), area,
+                                                                 self._row_caps["main"]))
+
+        def extras(offset, alpha):
+            if idx < 0 or lines[idx].is_break or alpha <= 0.01:
+                return
+            if "trans" in rows and self.extras is None and self.translation_pending:
+                tf = QFont(extra_f)
+                tf.setItalic(True)
+                self._paint_simple_line(p, tf, "translating…", cy("trans") + offset,
+                                        _qc(text_col, 0.45 * alpha * self._pulse() / 0.7), area, 1)
+            if self.extras is not None:
+                if "romaji" in rows:
+                    self._paint_simple_line(p, extra_f, self.extras.romaji.get(idx, ""), cy("romaji") + offset,
+                                            _qc(text_col, 0.72 * alpha), area, MAX_SIDE_ROWS)
+                if "trans" in rows:
+                    tf = QFont(extra_f)
+                    if self._swap():
+                        col = _qc(text_col, 0.7)              # the original lyrics, small and calm
+                    else:
+                        tf.setItalic(True)
+                        col = _with_alpha(_mix(_qc(text_col), _qc(self._c("highlight_color2")), 0.35), 0.9)
+                    self._paint_simple_line(p, tf, self._under_text(idx), cy("trans") + offset,
+                                            _with_alpha(col, col.alphaF() * alpha), area, MAX_SIDE_ROWS)
+
+        def current(y, alpha, scale=1.0):
+            if idx < 0:
+                remaining = max(0.0, (lines[0].start if lines else 0) - t)
+                dots = "♪  ♪  ♪" if remaining > 1.0 else "♪"
+                self._paint_simple_line(p, main_f, dots, y_main, _qc(text_col, self._pulse()), area)
+                return
+            if lines[idx].is_break:
+                self._paint_simple_line(p, main_f, "♪  ♪  ♪", y, _qc(text_col, self._pulse() * alpha), area)
+                return
+            scaled(y, scale, lambda: self._paint_karaoke_line(p, main_f, self._main_line(idx), t, y, alpha, area))
+
+        if r >= 1.0:                                      # nothing moving: everything in its place
+            if has_prev:
+                side(idx - 1, y_prev, "prev", 1.0)
+            if has_next:
+                side(idx + 1, y_next, "next", 1.0)
+            extras(0.0, 1.0)
+            current(y_main, 1.0)
+            return
+
+        if style == "scroll":
+            # a scrolling list: every line moves up one place at the same time, changing size on the way
+            m = _glide(r)
+            up = y_prev - (y_main - y_prev)                       # where the top line leaves to
+            if has_prev:
+                side(idx - 2, y_prev + (up - y_prev) * m, "prev", 1.0 - m)
+            ly_old = y_main + ((y_prev if has_prev else up) - y_main) * m
+            hand = _ease((r - 0.6) / 0.4) if has_prev else 0.0   # swap to the small font at the very end
+            old_line(ly_old, (1.0 - hand) if has_prev else (1.0 - m), 1.0 + (small - 1.0) * m)
+            if has_prev:
+                side(idx - 1, ly_old, "prev", hand)
+            if has_next:
+                side(idx + 1, y_next + step * (1 - m), "next", m)
+            extras((y_next - y_main) * (1 - m) * 0.3, _ease((r - 0.3) / 0.7))
+            y = y_main + (y_next - y_main) * (1 - m)
+            start = _ease(r / 0.3)                              # the small "next" text hands over to the big line
+            if has_next:
+                side(idx, y, "next", 1.0 - start)
+            current(y, (0.55 + 0.45 * m) * start, small + (1.0 - small) * m)
+        elif style == "fade":
+            # nothing moves: each place fades from the old text to the new one (old out first, then new in)
+            out_a = 1.0 - _ease(r / 0.45)
+            in_a = _ease((r - 0.35) / 0.65)
+            if has_prev:
+                side(idx - 2, y_prev, "prev", out_a)
+                side(idx - 1, y_prev, "prev", in_a)
+            if has_next:
+                side(idx, y_next, "next", out_a)
+                side(idx + 1, y_next, "next", in_a)
+            old_line(y_main, out_a)
+            extras(0.0, in_a)
+            current(y_main, in_a)
+        elif style == "slide":
+            # the older, snappy slide: everything eases up a little and fades in quickly
+            a = _ease(r)
+            slide = (1 - a) * self._ctx_h * 0.8
+            if has_prev:
+                side(idx - 1, y_prev + slide, "prev", a)
+            if has_next:
+                side(idx + 1, y_next + slide * 0.5, "next", 1.0)
+            extras(slide, a)
+            old_line(y_main - a * self._ctx_h * 0.9, 1.0 - a)
+            current(y_main + slide, a)
+        else:                                             # "grow": in turns - old fades, new rises and grows
+            m = _glide(r)
+            late_in = _ease((r - 0.5) / 0.5)
+            mid_in = _ease((r - 0.25) / 0.75)
+            if has_prev:
+                side(idx - 1, y_prev + (1 - m) * self._ctx_h * 0.5, "prev", mid_in)
+            if has_next:
+                side(idx + 1, y_next + (1 - late_in) * self._ctx_h * 0.35, "next", late_in)
+            extras((y_next - y_main) * (1 - m) * 0.3, mid_in)
+            old_line(y_main - m * self._ctx_h * 0.9, 1.0 - _ease(r / 0.35))
+            current(y_main + (1 - m) * (y_next - y_main), 0.55 + 0.45 * m, small + (1.0 - small) * m)
 
     # ------------------------------------------------------------ karaoke line
     def _paint_karaoke_line(self, p: QPainter, f: QFont, line: Line, t: float, cy: float,

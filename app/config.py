@@ -49,6 +49,7 @@ class Settings:
     glow: bool = True
     theme: str = "Neon"
     highlight_style: str = "wipe"        # see themes.HIGHLIGHT_STYLES
+    line_transition: str = "scroll"      # how it moves to the next line - see themes.LINE_TRANSITIONS
     keep_sung_colored: bool = True       # sung words stay tinted (False = back to white)
     # Overall overlay design: "classic" | "aurora" | "hud" | "spotify"
     design: str = "classic"
@@ -209,6 +210,9 @@ class Settings:
         from .translate import LANGUAGES
         if self.highlight_style not in HIGHLIGHT_STYLES:
             self.highlight_style = "wipe"
+        from .themes import LINE_TRANSITIONS
+        if self.line_transition not in LINE_TRANSITIONS:
+            self.line_transition = "scroll"
         if self.translate_target not in LANGUAGES:
             self.translate_target = "en"
 
