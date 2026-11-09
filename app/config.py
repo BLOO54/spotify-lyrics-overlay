@@ -50,6 +50,8 @@ class Settings:
     theme: str = "Neon"
     highlight_style: str = "wipe"        # see themes.HIGHLIGHT_STYLES
     line_transition: str = "scroll"      # how it moves to the next line - see themes.LINE_TRANSITIONS
+    size_scale: float = 1.0              # shrink / grow the whole overlay (0.5 - 1.5)
+    mini_mode: bool = False              # just the current line, smaller, no title (quick toggle while gaming)
     keep_sung_colored: bool = True       # sung words stay tinted (False = back to white)
     # Overall overlay design: "classic" | "aurora" | "hud" | "spotify"
     design: str = "classic"
@@ -121,6 +123,7 @@ class Settings:
     hk_later: str = "Ctrl+Alt+Right"
     hk_version: str = "Ctrl+Alt+V"
     hk_report: str = "Ctrl+Alt+R"
+    hk_mini: str = "Ctrl+Alt+M"
 
     # ------------------------------------------------------------------
     @classmethod
@@ -210,6 +213,10 @@ class Settings:
         from .translate import LANGUAGES
         if self.highlight_style not in HIGHLIGHT_STYLES:
             self.highlight_style = "wipe"
+        try:
+            self.size_scale = min(1.5, max(0.5, float(self.size_scale)))
+        except (TypeError, ValueError):
+            self.size_scale = 1.0
         from .themes import LINE_TRANSITIONS
         if self.line_transition not in LINE_TRANSITIONS:
             self.line_transition = "scroll"

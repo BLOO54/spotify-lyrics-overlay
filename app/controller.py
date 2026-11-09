@@ -43,11 +43,11 @@ RETRY_SECONDS = 15
 FRAME_MS = 16          # ~60 fps
 TOPMOST_MS = 2000
 
-HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER, HK_VERSION, HK_REPORT = range(1, 8)
+HK_TOGGLE, HK_CLICK, HK_SETTINGS, HK_EARLIER, HK_LATER, HK_VERSION, HK_REPORT, HK_MINI = range(1, 9)
 # hotkey id -> settings field holding its key combination
 HOTKEY_FIELDS = {HK_TOGGLE: "hk_toggle", HK_CLICK: "hk_click", HK_SETTINGS: "hk_settings",
                  HK_EARLIER: "hk_earlier", HK_LATER: "hk_later", HK_VERSION: "hk_version",
-                 HK_REPORT: "hk_report"}
+                 HK_REPORT: "hk_report", HK_MINI: "hk_mini"}
 
 
 class _DiagLogHandler(logging.Handler):
@@ -178,7 +178,8 @@ class Controller(QObject):
         self.icon = QIcon(str(resource_path("assets/icon.png")))
         app.setWindowIcon(self.icon)
 
-        self.overlay = OverlayWindow(self.s)
+        from .sized_settings import SizedSettings
+        self.overlay = OverlayWindow(SizedSettings(self.s))
         self.overlay.on_painted = self.diag.painted
         self._smooth_timer = QTimer(self)
         self._smooth_timer.timeout.connect(self._check_smoothness)
@@ -238,6 +239,9 @@ class Controller(QObject):
         self.act_ai = QAction("AI sync", self.menu, checkable=True)
         self.act_ai.setChecked(self.s.ai_sync_enabled)
         self.act_ai.toggled.connect(self.set_ai_enabled)
+        self.act_mini = QAction("Mini mode (just the current line)", self.menu, checkable=True)
+        self.act_mini.setChecked(self.s.mini_mode)
+        self.act_mini.toggled.connect(self.set_mini_mode)
         self.act_click = QAction("Click-through", self.menu, checkable=True)
         self.act_click.setChecked(self.s.click_through)
         self.act_click.toggled.connect(self.set_click_through)
@@ -280,9 +284,10 @@ class Controller(QObject):
                             "hk_earlier": (act_earlier, "This song: lyrics earlier (−250 ms)"),
                             "hk_later": (act_later, "This song: lyrics later (+250 ms)"),
                             "hk_version": (act_version, "Try another lyrics version"),
-                            "hk_report": (act_report, "Save a problem report…")}
+                            "hk_report": (act_report, "Save a problem report…"),
+                            "hk_mini": (self.act_mini, "Mini mode (just the current line)")}
         self._label_menu()
-        for a in (self.act_show, self.act_click, self.act_ai, act_settings, act_meanings, act_full):
+        for a in (self.act_show, self.act_mini, self.act_click, self.act_ai, act_settings, act_meanings, act_full):
             self.menu.addAction(a)
         self.menu.addSeparator()
         for a in (act_earlier, act_later, act_reset, act_version, act_tap, self.act_ai_redo, act_folder, act_refetch):
@@ -385,8 +390,31 @@ class Controller(QObject):
             self.try_other_version()
         elif hid == HK_REPORT:
             self.save_problem_report()
+        elif hid == HK_MINI:
+            self.set_mini_mode(not self.s.mini_mode)
 
     # ------------------------------------------------------------ actions
+    def set_mini_mode(self, on: bool):
+        """Mini mode: just the current line, a bit smaller, no title - covers less of a game."""
+        on = bool(on)
+        if self.act_mini.isChecked() != on:
+            self.act_mini.blockSignals(True)
+            self.act_mini.setChecked(on)
+            self.act_mini.blockSignals(False)
+        if self.s.mini_mode == on:
+            return
+        self.s.mini_mode = on
+        self.s.save()
+        self.overlay.apply_settings()
+        if self.settings_dlg is not None and "mini_mode" in getattr(self.settings_dlg, "_w", {}):
+            w = self.settings_dlg._w["mini_mode"]
+            w.blockSignals(True)
+            w.setChecked(on)
+            w.blockSignals(False)
+        keys = self.s.hk_mini
+        self.notify(("Mini mode on – just the current line." if on else "Mini mode off – normal size.")
+                    + (f" ({keys} to switch)" if keys else ""), "info", 1800)
+
     def set_visible(self, visible: bool):
         self.s.visible = bool(visible)
         self.s.save()
@@ -684,6 +712,10 @@ class Controller(QObject):
             self.menu.setStyleSheet("")
         self.act_click.setChecked(self.s.click_through)
         self.act_show.setChecked(self.s.visible)
+        if self.act_mini.isChecked() != self.s.mini_mode:
+            self.act_mini.blockSignals(True)
+            self.act_mini.setChecked(self.s.mini_mode)
+            self.act_mini.blockSignals(False)
         if self.act_ai.isChecked() != self.s.ai_sync_enabled:
             self.act_ai.setChecked(self.s.ai_sync_enabled)
         if not self.demo:

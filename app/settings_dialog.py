@@ -487,6 +487,17 @@ class SettingsDialog(QDialog):
 
     def _layout_tab(self):
         w, f = self._page()
+        self._w["size_scale"] = self._slider("size_scale", 50, 150)
+        self._w["size_scale"].slider.setSingleStep(5)
+        self._w["size_scale"].slider.setPageStep(10)
+        f.addRow("Overall size", self._w["size_scale"])
+        self._w["mini_mode"] = self._check("Mini mode – just the current line, smaller, no title", "mini_mode")
+        f.addRow(self._w["mini_mode"])
+        tip = QLabel("Overall size shrinks or grows everything together (text, width, title) without changing "
+                     "your other settings. Mini mode is quick to switch while gaming – see Shortcuts.")
+        tip.setObjectName("rowSub")
+        tip.setWordWrap(True)
+        f.addRow(tip)
         fs = QPushButton("Open full-screen lyrics")
         fs.clicked.connect(self.fullscreen_requested)
         fs_row = QHBoxLayout()
@@ -1184,12 +1195,12 @@ class SettingsDialog(QDialog):
         b.toggled.connect(lambda v: self._set(key, bool(v)))
         return b
 
-    def _slider(self, key, minimum):
+    def _slider(self, key, minimum, maximum=100):
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         sl = QSlider(Qt.Orientation.Horizontal)
-        sl.setRange(minimum, 100)
+        sl.setRange(minimum, maximum)
         sl.setValue(int(round(getattr(self.s, key) * 100)))
         lab = QLabel(f"{sl.value()}%")
         lab.setFixedWidth(40)

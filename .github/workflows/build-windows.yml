@@ -112,6 +112,8 @@ jobs:
             "ai-spotify"     = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI_syncing","--ai-progress","0.63"); s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; ai_sync_enabled = $true } }
             "ai-hud"         = @{ song = "1";  at = 6; grab = $false; extra = @("--ai-note","AI_syncing","--ai-progress","0.8"); s = @{ design = "hud"; show_album_art = $false; time_display = "left"; ai_sync_enabled = $true } }
             "design-spotify" = @{ song = "jp"; at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; match_album_highlight = $true } }
+            "size-60"        = @{ song = "1";  at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; size_scale = 0.6 } }
+            "mini-mode"      = @{ song = "1";  at = 6; grab = $false; s = @{ design = "spotify"; show_album_art = $true; time_display = "left"; show_progress = $true; mini_mode = $true } }
           }
           foreach ($name in $shots.Keys) {
             $conf = $shots[$name].s
