@@ -22,7 +22,7 @@ It never touches Spotify or your games.
 
 ## 📥 Installing (no programming needed)
 
-1. Download **`SpotifyLyricsOverlay-Setup-1.27.1.exe`** (see "Where do I get the installer?" below).
+1. Download **`SpotifyLyricsOverlay-Setup-1.28.0.exe`** (see "Where do I get the installer?" below).
 2. Double-click it.
 3. **Windows may show a blue "Windows protected your PC" box.** This is normal for free apps
    that aren't paid-signed. Click **More info** → **Run anyway**.
@@ -31,7 +31,7 @@ It never touches Spotify or your games.
    *It installs just for your user account, so it never asks for administrator permission.*
 5. Leave "Start Spotify Lyrics Overlay now" ticked and click **Finish**.
 
-**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.27.1.zip` instead, right-click → **Extract All**,
+**Prefer no installer?** Download `SpotifyLyricsOverlay-Portable-1.28.0.zip` instead, right-click → **Extract All**,
 open the folder and double-click **`SpotifyLyricsOverlay.exe`**.
 
 ### Where do I get the installer?
@@ -213,6 +213,8 @@ sits on top of a game by itself.
 Settings → **AI sync** → *Open the AI sync window*: what the AI is doing right now (listening / working, with
 progress), a checklist of what it needs, and every song it synced - pick one to see which lyric lines it **heard**
 ✔ and which it **missed** ✖ (missed lines are timed from the lines around them).
+**Re-match all songs** (same window, under the song list): re-matches every AI-synced song at once from the
+words it heard - no listening; a song only changes if it gets better (or stays the same).
 **Re-match** (same window, on a song's details): matches the words the AI heard to the lyrics again with the
 app's newest matching - no need to play the song again. Works for songs synced from version 1.19.0 on.
 **Listen to missed parts only** (same window, on a song with missed lines): Spotify jumps to each part the AI

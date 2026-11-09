@@ -146,6 +146,12 @@ class AiSyncWindow(QWidget):
         self.songs.setObjectName("songs")
         self.songs.currentRowChanged.connect(self._song_picked)
         sl.addWidget(self.songs, 1)
+        self.rematch_all_btn = QPushButton("Re-match all songs")
+        self.rematch_all_btn.setToolTip("Match every AI-synced song again from the words it heard, with the "
+                                        "app's newest matching – no listening. A song only changes if it gets "
+                                        "better (or stays the same).")
+        self.rematch_all_btn.clicked.connect(lambda: (self.ctl.ai_rematch_all(), self.refresh()))
+        sl.addWidget(self.rematch_all_btn, 0, Qt.AlignmentFlag.AlignLeft)
         lines_card, ll = self._card("LINES IT HEARD  ✔   ·   MISSED  ✖")
         self.lines = QTextBrowser()
         self.lines.setObjectName("lines")
@@ -286,6 +292,9 @@ class AiSyncWindow(QWidget):
             lab.setWordWrap(True)
             self.need_layout.insertWidget(self.need_layout.count() - 1, lab)
             self.need_labels.append(lab)
+        busy = bool(snap.get("rematching_all"))
+        self.rematch_all_btn.setEnabled(not busy)
+        self.rematch_all_btn.setText("Re-matching all songs…" if busy else "Re-match all songs")
         one = snap.get("one_song")
         if one:
             states = {"waiting": "Waiting for it to play", "syncing": "Syncing", "processing": "Working out the timing"}

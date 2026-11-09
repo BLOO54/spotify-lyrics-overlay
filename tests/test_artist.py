@@ -89,3 +89,20 @@ def test_long_genius_bio_is_shortened():
     long = "".join(f"<p>{'word ' * 60}{i}</p>" for i in range(10))
     short = A._shorten_html(long, 700)
     assert short.count("<p>") == 2
+
+
+def test_wikipedia_exact_page_first_and_musicbrainz_does_not_guess(monkeypatch):
+    monkeypatch.setattr(A.time, "sleep", lambda s: None)
+    http = FakeHttp({
+        "summary/Daft_Punk": {"type": "standard", "title": "Daft Punk", "description": "French electronic music duo",
+                               "extract": "Daft Punk were a French electronic music duo.", "extract_html": "<p>Daft</p>",
+                               "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Daft_Punk"}}},
+        "ws/2/artist/?": {"artists": [{"id": "1", "name": "Kasane Teto", "score": 100,
+                                       "disambiguation": "NOT THE VIRTUAL SINGER - lolicore"}]}})
+    w = A.wikipedia_artist("Daft Punk", http)
+    assert w["tagline"] == "French electronic music duo" and "w/api.php" not in " ".join(http.urls)
+    assert A.musicbrainz_artist("Kasane Teto", http) == {}            # its own note says it's someone else
+    twins = FakeHttp({"ws/2/artist/?": {"artists": [{"id": "1", "name": "Nova", "score": 100},
+                                                    {"id": "2", "name": "Nova", "score": 98}]}})
+    assert A.musicbrainz_artist("Nova", twins) == {}                  # two artists called Nova: don't guess
+    assert A._service_name("https://open.spotify.com/artist/x") == "Spotify"

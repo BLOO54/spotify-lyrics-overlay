@@ -83,6 +83,7 @@ class _Bridge(QObject):
     ai_progress = Signal(object, object)      # done bytes, total bytes
     ai_job_progress = Signal(object, object)  # song key, fraction 0..1 while the AI works on it
     ai_patch_done = Signal(object, object)    # missed-parts session, (lrc, result, message) or an error
+    ai_rematch_all_done = Signal(object)      # summary of "re-match all songs"
     ai_downloaded = Signal(object, object)    # model name, error or None
 
 
@@ -135,6 +136,7 @@ class Controller(QObject):
         self.bridge.ai_progress.connect(self._on_ai_progress)
         self.bridge.ai_job_progress.connect(self._on_ai_job_progress)
         self.bridge.ai_patch_done.connect(self._on_ai_patch_done)
+        self.bridge.ai_rematch_all_done.connect(self._on_rematch_all_done)
         self.bridge.ai_downloaded.connect(self._on_ai_downloaded)
         self.update_info = None
         self._update_busy = False
@@ -149,6 +151,7 @@ class Controller(QObject):
         self.history = NotificationLog(app_data_dir() / "notifications.json")
         self.meanings_win = None
         self.artist_win = None
+        self._rematching_all = False
         self.ai_store = ai_sync.ModelStore()
         self.ai_listener = None
         self.ai_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai")
@@ -1159,6 +1162,66 @@ class Controller(QObject):
         self._refresh_synced()
         self._refresh_ai_window()
 
+    def ai_rematch_all(self):
+        """Re-match every AI-synced song from the words it heard - no listening. A song is only changed
+        when the new match is at least as good as the saved one."""
+        if self._rematching_all:
+            return
+        from .my_lyrics import list_synced
+        songs = [e for e in list_synced(self.ai_lyrics.folder, "ai")]
+        if not songs:
+            self.notify("No AI-synced songs yet.", "info", 3000)
+            return
+        self._rematching_all = True
+        self._refresh_ai_window()
+
+        def work():
+            out = {"songs": len(songs), "better": [], "same": 0, "skipped": 0, "gained": 0}
+            for e in songs:
+                p = Path(e["path"])
+                try:
+                    d = ai_sync.load_details(p) or {}
+                    text, res, _ = ai_sync.rematch(p, e["title"], e.get("artist") or "")
+                    if not text:
+                        out["skipped"] += 1               # synced before the heard words were saved
+                        continue
+                    before = int(d.get("matched") or 0)
+                    if res.matched_lines < before:
+                        out["same"] += 1                   # never make a song worse
+                        continue
+                    p.write_text(text, encoding="utf-8")
+                    extra = {"last_patch": d["last_patch"]} if d.get("last_patch") else None
+                    ai_sync.save_details(p, d.get("lines") or [], res, d.get("orig"), extra)
+                    if res.matched_lines > before:
+                        out["better"].append((e["title"], before, res.matched_lines))
+                        out["gained"] += res.matched_lines - before
+                    else:
+                        out["same"] += 1
+                except Exception:
+                    log.exception("re-match all: %s failed", e.get("title"))
+                    out["skipped"] += 1
+            return out
+        self.pool.submit(work).add_done_callback(lambda f: self.bridge.ai_rematch_all_done.emit(f.result()))
+
+    def _on_rematch_all_done(self, out):
+        self._rematching_all = False
+        log.info("re-match all: %s", out)
+        if out["better"]:
+            top = ", ".join(f"“{t}” {a}→{b}" for t, a, b in out["better"][:3])
+            more = f" and {len(out['better']) - 3} more" if len(out["better"]) > 3 else ""
+            msg = (f"Re-matched {out['songs']} songs: {len(out['better'])} got better "
+                   f"(+{out['gained']} lines) – {top}{more}.")
+        else:
+            msg = f"Re-matched {out['songs']} songs – none needed changes."
+        if out["skipped"]:
+            msg += f" {out['skipped']} were synced before re-matching was possible (sync them again to include them)."
+        self.notify(msg, "success" if out["better"] else "info", 8000, keep=True)
+        self._last_rematch_all = msg
+        if self.track and self.track.title and any(t == self.track.title for t, _, _ in out["better"]):
+            self._fetch(self.track)
+        self._refresh_synced()
+        self._refresh_ai_window()
+
     def ai_redo_song(self):
         if not (self.track and self.track.title):
             self.notify("Play a song first.", "info", 2000)
@@ -1743,6 +1806,7 @@ class Controller(QObject):
             e["details"] = ai_sync.load_details(Path(e["path"]))
         return {"one_song": dict(self._one_song) if self._one_song else None,
                 "last_patch": getattr(self, "_last_patch", None),
+                "rematching_all": self._rematching_all,
                 "enabled": s.ai_sync_enabled, "model": f"{label} ({size})", "installed": installed,
                 "threads": s.ai_threads, "now": now, "need": need, "working": working,
                 "recent": list(self._recent_ai[:20]), "songs": songs}

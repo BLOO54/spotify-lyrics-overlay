@@ -121,30 +121,53 @@ def genius_artist(token: str, artist: str, song_title: str = "", http: _Http | N
 
 
 # --------------------------------------------------------------------------- Wikipedia
+def _wiki_summary(http: _Http, title: str, lang: str) -> dict:
+    try:
+        return http.json(f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/"
+                         f"{urllib.parse.quote(title.replace(' ', '_'), safe='')}") or {}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {}
+        raise
+
+
+def _is_musician(summ: dict) -> bool:
+    desc = (summ.get("description") or "").lower()
+    extract = (summ.get("extract") or "")[:400].lower()
+    return summ.get("type") == "standard" and any(w in desc or w in extract for w in MUSIC_WORDS)
+
+
 def wikipedia_artist(artist: str, http: _Http | None = None, lang: str = "en") -> dict:
-    """{title, tagline, extract_html, photo, url} for the artist's Wikipedia page, or {} if unsure."""
+    """{title, tagline, extract_html, photo, url} for the artist's Wikipedia page, or {} if unsure.
+    Tries the exact page first ("Daft Punk"), then "Name (band)" etc., then a search."""
     http = http or _Http()
+    tried = set()
+    candidates = [artist] + [f"{artist} ({k})" for k in ("band", "musician", "singer", "rapper", "group",
+                                                         "producer", "DJ")]
+    for title in candidates:
+        tried.add(title.lower())
+        summ = _wiki_summary(http, title, lang)
+        if summ and _is_musician(summ):
+            return _wiki_result(summ, title)
     q = urllib.parse.urlencode({"action": "query", "list": "search", "format": "json", "srlimit": 6,
-                                "srsearch": f"{artist} musician OR singer OR band OR rapper OR producer"})
+                                "srsearch": artist})
     hits = (http.json(f"https://{lang}.wikipedia.org/w/api.php?{q}").get("query") or {}).get("search") or []
     for h in hits:
         title = h.get("title") or ""
         base = re.sub(r"\s*\([^)]*\)$", "", title)                  # "Name (singer)" -> "Name"
-        if not _same_name(base, artist):
+        if not _same_name(base, artist) or title.lower() in tried:
             continue
-        summ = http.json(f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/"
-                         f"{urllib.parse.quote(title.replace(' ', '_'), safe='')}")
-        if summ.get("type") == "disambiguation":
-            continue
-        desc = (summ.get("description") or "").lower()
-        extract = summ.get("extract") or ""
-        if not any(w in desc or w in extract[:400].lower() for w in MUSIC_WORDS):
-            continue                                                # same name, but not a musician
-        return {"title": summ.get("title") or title, "tagline": summ.get("description") or "",
-                "extract_html": summ.get("extract_html") or "",
-                "photo": ((summ.get("originalimage") or summ.get("thumbnail") or {}).get("source")) or "",
-                "url": ((summ.get("content_urls") or {}).get("desktop") or {}).get("page") or ""}
+        summ = _wiki_summary(http, title, lang)
+        if _is_musician(summ):                                      # same name, but must be a musician
+            return _wiki_result(summ, title)
     return {}
+
+
+def _wiki_result(summ: dict, title: str) -> dict:
+    return {"title": summ.get("title") or title, "tagline": summ.get("description") or "",
+            "extract_html": summ.get("extract_html") or "",
+            "photo": ((summ.get("originalimage") or summ.get("thumbnail") or {}).get("source")) or "",
+            "url": ((summ.get("content_urls") or {}).get("desktop") or {}).get("page") or ""}
 
 
 # --------------------------------------------------------------------------- MusicBrainz
@@ -152,15 +175,28 @@ _MB_LINKS = {"official homepage": "Website", "youtube": "YouTube", "bandcamp": "
              "soundcloud": "SoundCloud", "patreon": "Patreon", "streaming": "Streaming"}
 
 
+def _service_name(url: str) -> str:
+    host = urllib.parse.urlparse(url).netloc.lower()
+    for key, name in (("spotify", "Spotify"), ("music.apple", "Apple Music"), ("deezer", "Deezer"),
+                      ("tidal", "Tidal"), ("music.youtube", "YouTube Music"), ("music.amazon", "Amazon Music"),
+                      ("soundcloud", "SoundCloud"), ("bandcamp", "Bandcamp")):
+        if key in host:
+            return name
+    return host.removeprefix("www.") or "Streaming"
+
+
 def musicbrainz_artist(artist: str, http: _Http | None = None) -> dict:
     """{facts, genres, links, url} from MusicBrainz, or {} if not found."""
     http = http or _Http()
     q = urllib.parse.urlencode({"query": f'artist:"{artist}"', "fmt": "json", "limit": 5})
     found = http.json(f"https://musicbrainz.org/ws/2/artist/?{q}").get("artists") or []
-    pick = next((a for a in found if int(a.get("score") or 0) >= 90 and _same_name(a.get("name", ""), artist)),
-                None)
-    if not pick:
+    same = [a for a in found if int(a.get("score") or 0) >= 90 and _same_name(a.get("name", ""), artist)
+            and not (a.get("disambiguation") or "").strip().lower().startswith("not ")]
+    if not same:
         return {}
+    if len(same) > 1 and int(same[0].get("score") or 0) < int(same[1].get("score") or 0) + 10:
+        return {}                      # several artists with this name and no clear winner: don't guess
+    pick = same[0]
     time.sleep(1.0)                    # MusicBrainz asks for at most one request a second
     a = http.json(f"https://musicbrainz.org/ws/2/artist/{pick['id']}?inc=genres+url-rels+tags&fmt=json")
     facts = []
@@ -186,6 +222,8 @@ def musicbrainz_artist(artist: str, http: _Http | None = None) -> dict:
     for rel in a.get("relations") or []:
         label = _MB_LINKS.get(rel.get("type") or "")
         url = ((rel.get("url") or {}).get("resource")) or ""
+        if label == "Streaming":
+            label = _service_name(url)
         if label and url and label not in seen:
             seen.add(label)
             links.append((label, url))
