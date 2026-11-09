@@ -550,6 +550,7 @@ class Controller(QObject):
             from .artist_window import ArtistWindow
             self.settings_artist = ArtistWindow(self)
             self.settings_artist.setMinimumSize(0, 0)
+            self.settings_artist.set_compact(True)
             self.settings_dlg.artist_holder.addWidget(self.settings_artist)
             self.settings_dlg.page_opened.connect(self._settings_page_opened)
             self.settings_dlg.synced_remove_requested.connect(self.remove_synced)

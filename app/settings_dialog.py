@@ -347,6 +347,8 @@ class SettingsDialog(QDialog):
             self.stack.setCurrentIndex(row)
             self.page_title.setText(self._pages[row][0])
             self.page_sub.setText(self._pages[row][1])
+            # the overlay preview takes room the artist page needs (and has nothing to do with it)
+            self.preview_frame.setVisible(self._pages[row][0] != "About the artist")
             self.page_opened.emit(self._pages[row][0])
 
     def show_page(self, name: str):

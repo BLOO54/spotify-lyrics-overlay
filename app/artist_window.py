@@ -46,8 +46,10 @@ class ArtistWindow(QWidget):
         self._req = 0
         self._done.connect(self._on_done)
         self._photo.connect(self._on_photo)
+        self._side = PHOTO
 
         root = QVBoxLayout(self)
+        self._root = root
         root.setContentsMargins(22, 18, 22, 14)
         root.setSpacing(14)
         top = QHBoxLayout()
@@ -70,6 +72,7 @@ class ArtistWindow(QWidget):
         hero = QFrame()
         hero.setObjectName("hero")
         hl = QHBoxLayout(hero)
+        self._hero_layout = hl
         hl.setContentsMargins(20, 18, 20, 18)
         hl.setSpacing(20)
         self.photo = QLabel("🎤")
@@ -114,6 +117,14 @@ class ArtistWindow(QWidget):
         self.credit.setWordWrap(True)
         root.addWidget(self.credit)
         self._message("🎤", "About the artist", "Play a song, or search any artist above.")
+
+    def set_compact(self, on: bool = True):
+        """Inside the Settings window: a smaller photo and less padding, so the bio has room."""
+        self._side = 92 if on else PHOTO
+        self.photo.setFixedSize(self._side, self._side)
+        self._root.setContentsMargins(*((0, 0, 0, 0) if on else (22, 18, 22, 14)))
+        self._root.setSpacing(10 if on else 14)
+        self._hero_layout.setContentsMargins(*((14, 12, 14, 12) if on else (20, 18, 20, 18)))
 
     # ------------------------------------------------------------ window
     def showEvent(self, e):
@@ -201,7 +212,7 @@ class ArtistWindow(QWidget):
     def _on_photo(self, req, data):
         if req != self._req or not data:
             return
-        pm = _rounded(data, PHOTO, 18)
+        pm = _rounded(data, self._side, 18)
         if pm is not None:
             self.photo.setText("")
             self.photo.setStyleSheet("background: transparent;")
