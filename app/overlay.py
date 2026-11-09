@@ -1222,35 +1222,44 @@ class OverlayWindow(QWidget):
         t = self.position
         idx = ly.line_index_at(t)
         if idx != self._line_idx:
-            # forward by one line: the old line drifts up and fades (a jump/seek just cuts)
+            # forward by one line: animate; a jump / seek just cuts to the new place
             self._fade_from = self._line_idx if idx == self._line_idx + 1 else None
             self._line_idx = idx
-            self._anim_start = time.monotonic()
-        a = _glide((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
+            self._anim_start = time.monotonic() if self._fade_from is not None else 0.0
+        # One line change, in turns so nothing sits on top of anything else:
+        #   1. the old line fades out quickly as it drifts up (first ~third)
+        #   2. the next line moves up into place and grows to full size (the whole time)
+        #   3. only then does the new "next" line fade in underneath (last ~half)
+        r = _clamp01((time.monotonic() - self._anim_start) / LINE_ANIM_SECONDS)
+        move = _glide(r)
+        old_alpha = 1.0 - _ease(r / 0.35)
+        late_in = _ease((r - 0.5) / 0.5)             # things that appear after the line has moved
+        mid_in = _ease((r - 0.25) / 0.75)
         lines = ly.lines
-        slide = (1 - a) * self._ctx_h * 0.8
+        has_next = "next" in rows
+        rise = (cy("next") - cy("main")) if has_next else self._ctx_h * 0.8
+        main_offset = (1 - move) * rise               # the new line starts where "next" was
 
         if "prev" in rows and idx - 1 >= 0:
-            self._paint_simple_line(p, ctx_f, self._main_text(idx - 1), cy("prev") + slide,
-                                    self._side_colour("prev", a), area, self._row_caps["prev"],
+            self._paint_simple_line(p, ctx_f, self._main_text(idx - 1), cy("prev") + (1 - move) * self._ctx_h * 0.5,
+                                    self._side_colour("prev", mid_in), area, self._row_caps["prev"],
                                     soft=self.design == "aurora")
-        if "next" in rows and idx + 1 < len(lines):
-            # the new "next" line fades in as it slides up, instead of popping in
-            self._paint_simple_line(p, ctx_f, self._main_text(idx + 1) or "♪", cy("next") + slide * 0.5,
-                                    self._side_colour("next", a if self._fade_from is not None else 1.0),
-                                    area, self._row_caps["next"],
+        if has_next and idx + 1 < len(lines):
+            self._paint_simple_line(p, ctx_f, self._main_text(idx + 1) or "♪",
+                                    cy("next") + (1 - late_in) * self._ctx_h * 0.35,
+                                    self._side_colour("next", late_in), area, self._row_caps["next"],
                                     soft=self.design == "aurora")
 
         if idx >= 0 and not lines[idx].is_break and "trans" in rows and self.extras is None \
                 and self.translation_pending:
             tf = QFont(extra_f)
             tf.setItalic(True)
-            self._paint_simple_line(p, tf, "translating…", cy("trans") + slide,
-                                    _qc(text_col, 0.45 * a * self._pulse() / 0.7), area, 1)
+            self._paint_simple_line(p, tf, "translating…", cy("trans") + main_offset * 0.3,
+                                    _qc(text_col, 0.45 * mid_in * self._pulse() / 0.7), area, 1)
         if idx >= 0 and not lines[idx].is_break and self.extras is not None:
             if "romaji" in rows:
-                self._paint_simple_line(p, extra_f, self.extras.romaji.get(idx, ""), cy("romaji") + slide,
-                                        _qc(text_col, 0.72 * a), area, MAX_SIDE_ROWS)
+                self._paint_simple_line(p, extra_f, self.extras.romaji.get(idx, ""), cy("romaji") + main_offset * 0.3,
+                                        _qc(text_col, 0.72 * mid_in), area, MAX_SIDE_ROWS)
             if "trans" in rows:
                 tf = QFont(extra_f)
                 if self._swap():
@@ -1258,14 +1267,14 @@ class OverlayWindow(QWidget):
                 else:
                     tf.setItalic(True)
                     col = _with_alpha(_mix(_qc(text_col), _qc(self._c("highlight_color2")), 0.35), 0.9)
-                self._paint_simple_line(p, tf, self._under_text(idx), cy("trans") + slide,
-                                        _with_alpha(col, col.alphaF() * a), area, MAX_SIDE_ROWS)
+                self._paint_simple_line(p, tf, self._under_text(idx), cy("trans") + main_offset * 0.3,
+                                        _with_alpha(col, col.alphaF() * mid_in), area, MAX_SIDE_ROWS)
 
-        old = getattr(self, "_fade_from", None)
-        if a < 1.0 and old is not None and 0 <= old < len(lines) and not lines[old].is_break:
+        old = self._fade_from
+        if old_alpha > 0.01 and old is not None and 0 <= old < len(lines) and not lines[old].is_break:
             sung = self._line_colours(1.0)[3]
-            self._paint_simple_line(p, main_f, self._main_text(old), cy("main") - a * self._ctx_h * 0.9,
-                                    _with_alpha(sung, 0.85 * (1 - a)), area, self._row_caps["main"])
+            self._paint_simple_line(p, main_f, self._main_text(old), cy("main") - move * self._ctx_h * 0.9,
+                                    _with_alpha(sung, 0.85 * old_alpha), area, self._row_caps["main"])
 
         if idx < 0:
             remaining = max(0.0, (lines[0].start if lines else 0) - t)
@@ -1274,10 +1283,25 @@ class OverlayWindow(QWidget):
             return
         line = lines[idx]
         if line.is_break:
-            self._paint_simple_line(p, main_f, "♪  ♪  ♪", cy("main") + slide,
-                                    _qc(text_col, self._pulse() * a), area)
+            self._paint_simple_line(p, main_f, "♪  ♪  ♪", cy("main") + main_offset,
+                                    _qc(text_col, self._pulse() * (0.5 + 0.5 * move)), area)
             return
-        self._paint_karaoke_line(p, main_f, self._main_line(idx), t, cy("main") + slide, a, area)
+        # the new line grows from the "next" line's size to full size as it moves up
+        grow = 1.0
+        if move < 1.0 and main_f.pixelSize() > 0:
+            small = min(1.0, ctx_f.pixelSize() / main_f.pixelSize())
+            grow = small + (1.0 - small) * move
+        y = cy("main") + main_offset
+        if grow < 0.999:
+            left, right = area
+            ax = left + self._pad * 0.4 if self._align_left() else (left + right) / 2
+            p.save()
+            p.translate(ax, y)
+            p.scale(grow, grow)
+            p.translate(-ax, -y)
+        self._paint_karaoke_line(p, main_f, self._main_line(idx), t, y, 0.55 + 0.45 * move, area)
+        if grow < 0.999:
+            p.restore()
 
     # ------------------------------------------------------------ karaoke line
     def _paint_karaoke_line(self, p: QPainter, f: QFont, line: Line, t: float, cy: float,

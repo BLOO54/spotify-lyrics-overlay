@@ -262,6 +262,29 @@ def _schedule_frame_test(app, ctl, out):
         pstats.Stats(prof, stream=buf).sort_stats("tottime").print_stats(18)
         report["slowest"] = [ln.strip() for ln in buf.getvalue().splitlines() if ln.strip()][-20:]
         ov.grab().save(str(out).replace(".json", "-spotify.png"))
+        # one line change, photographed at 6 moments, stacked into one picture
+        from PySide6.QtGui import QPainter, QPixmap
+
+        from app.overlay import LINE_ANIM_SECONDS
+        ctl.frame_timer.stop()
+        ly = ov.lyrics
+        if ly and ly.synced:
+            idx = ly.line_index_at(ov.position)
+            shots = []
+            for frac in (0.0, 0.15, 0.3, 0.5, 0.7, 1.0):
+                ov._line_idx = idx - 1                       # pretend the line just changed
+                ov.grab()                                    # this drawing starts the change...
+                ov._anim_start = _t.monotonic() - frac * LINE_ANIM_SECONDS
+                shots.append(ov.grab())                      # ...and this one shows it at `frac`
+            strip = QPixmap(shots[0].width(), sum(s.height() for s in shots) + 6 * len(shots))
+            strip.fill()
+            sp = QPainter(strip)
+            y = 0
+            for s in shots:
+                sp.drawPixmap(0, y, s)
+                y += s.height() + 6
+            sp.end()
+            strip.save(str(out).replace(".json", "-transition.png"))
         import shutil
 
         from app.diagnostics import make_report
