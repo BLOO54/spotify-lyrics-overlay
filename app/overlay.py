@@ -1304,6 +1304,42 @@ class OverlayWindow(QWidget):
                 return
             scaled(y, scale, lambda: self._paint_karaoke_line(p, main_f, self._main_line(idx), t, y, alpha, area))
 
+        if style == "scroll":
+            # A scrolling list: every line moves up one place at the same time. The lines above and
+            # below use the same (bold) font as the big line, just smaller, so a line can grow or
+            # shrink as it moves without ever swapping to a different font (which looked doubled).
+            def listed(i, y, which, alpha, scale):
+                if 0 <= i < len(lines) and alpha > 0.01:
+                    col = self._side_colour(which, alpha)
+                    scaled(y, scale, lambda: self._paint_simple_line(p, main_f, text(i), y, col, area,
+                                                                     self._row_caps[which], soft=soft))
+            m = _glide(r)
+            up = y_prev - (y_main - y_prev)                       # where the top line leaves to
+            if has_prev:
+                listed(idx - 2, y_prev + (up - y_prev) * m * 0.5, "prev", 1.0 - _ease(r / 0.4), small)
+            o = self._fade_from
+            y_old = y_main + ((y_prev if has_prev else up) - y_main) * m
+            if o is not None and 0 <= o < len(lines) and not lines[o].is_break:
+                if has_prev:                                      # becomes the line above: dims as it shrinks
+                    c = _mix(_with_alpha(sung, 0.85), self._side_colour("prev", 1.0), m)
+                    scaled(y_old, 1.0 + (small - 1.0) * m,
+                           lambda: self._paint_simple_line(p, main_f, self._main_text(o), y_old, c, area,
+                                                           self._row_caps["main"]))
+                else:
+                    old_line(y_old, 1.0 - _ease(r / 0.6), 1.0 + (small - 1.0) * m)
+            elif has_prev and idx - 1 >= 0:
+                listed(idx - 1, y_old, "prev", m, small)
+            if has_next:                                          # the one after comes in from just below
+                listed(idx + 1, y_next + step * 0.5 * (1 - m), "next", _ease((r - 0.35) / 0.65), small)
+            extras((y_next - y_main) * (1 - m) * 0.3, _ease((r - 0.3) / 0.7))
+            y = y_main + (y_next - y_main) * (1 - m)
+            sc = small + (1.0 - small) * m
+            start = _ease(r / 0.25)                              # the small "next" line hands over to the big one
+            if has_next:
+                listed(idx, y, "next", 1.0 - start, sc)
+            current(y, (0.55 + 0.45 * m) * start, sc)
+            return
+
         if r >= 1.0:                                      # nothing moving: everything in its place
             if has_prev:
                 side(idx - 1, y_prev, "prev", 1.0)
@@ -1313,29 +1349,10 @@ class OverlayWindow(QWidget):
             current(y_main, 1.0)
             return
 
-        if style == "scroll":
-            # a scrolling list: every line moves up one place at the same time, changing size on the way
-            m = _glide(r)
-            up = y_prev - (y_main - y_prev)                       # where the top line leaves to
-            if has_prev:
-                side(idx - 2, y_prev + (up - y_prev) * m, "prev", 1.0 - m)
-            ly_old = y_main + ((y_prev if has_prev else up) - y_main) * m
-            hand = _ease((r - 0.6) / 0.4) if has_prev else 0.0   # swap to the small font at the very end
-            old_line(ly_old, (1.0 - hand) if has_prev else (1.0 - m), 1.0 + (small - 1.0) * m)
-            if has_prev:
-                side(idx - 1, ly_old, "prev", hand)
-            if has_next:
-                side(idx + 1, y_next + step * (1 - m), "next", m)
-            extras((y_next - y_main) * (1 - m) * 0.3, _ease((r - 0.3) / 0.7))
-            y = y_main + (y_next - y_main) * (1 - m)
-            start = _ease(r / 0.3)                              # the small "next" text hands over to the big line
-            if has_next:
-                side(idx, y, "next", 1.0 - start)
-            current(y, (0.55 + 0.45 * m) * start, small + (1.0 - small) * m)
-        elif style == "fade":
+        if style == "fade":
             # nothing moves: each place fades from the old text to the new one (old out first, then new in)
-            out_a = 1.0 - _ease(r / 0.45)
-            in_a = _ease((r - 0.35) / 0.65)
+            out_a = 1.0 - _ease(r / 0.4)
+            in_a = _ease((r - 0.25) / 0.75)
             if has_prev:
                 side(idx - 2, y_prev, "prev", out_a)
                 side(idx - 1, y_prev, "prev", in_a)
