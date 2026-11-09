@@ -27,6 +27,8 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QLinear
                            QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QWidget
 
+from .motion import follow, sweep_target
+
 from . import win32
 from .config import Settings
 from .lrc import Line, Lyrics, split_tokens, timed_copy, wrap_rows
@@ -72,7 +74,7 @@ def _ease(t: float) -> float:
 def _glide(t: float) -> float:
     """Gentle start and gentle stop (for lines moving): no sudden jump at the start like a plain ease-out."""
     t = max(0.0, min(1.0, t))
-    return 4 * t * t * t if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
+    return t * t * (3 - 2 * t)          # smoothstep: eases in and out, but gets going sooner than a cubic
 
 
 def _clamp01(v: float) -> float:
@@ -1349,6 +1351,7 @@ class OverlayWindow(QWidget):
 
         # ---- word-by-word karaoke, row by row
         height = fm.height()
+        sweep = self._wipe_sweep(line, layout, widths, gaps, space, t) if style == "wipe" else None
         for r, placed in layout:
             base = first_cy + r * line_h + (fm.ascent() - fm.descent()) / 2
             top = base - fm.ascent()
@@ -1359,6 +1362,22 @@ class OverlayWindow(QWidget):
                 grad = QLinearGradient(x, 0, x + max(w, 1), 0)
                 grad.setColorAt(0, hi1)
                 grad.setColorAt(1, hi2)
+                if sweep is not None:
+                    # one continuous sweep along the line: where it is inside this word
+                    feather = max(6.0, min(22.0, w * 0.35))
+                    edge = x + (sweep - self._sweep_u0[i])
+                    if edge >= x + w + feather:
+                        fade = _clamp01((t - word.end) / SUNG_FADE) if t >= word.end else 0.0
+                        c = _mix(hi1, sung_target, fade)
+                        self._draw_text(p, path, c, oa, glow=glow_c if fade < 1 else None, glow_strength=1 - fade)
+                    elif edge <= x - feather:
+                        self._draw_text(p, path, text_c, oa)
+                    else:
+                        prog = _clamp01((edge - x) / max(w, 1.0))
+                        g = glow_c if glow_c is not None else hi1
+                        self._draw_text(p, path, text_c, oa, glow=g, glow_strength=0.4 + 0.6 * prog)
+                        p.fillPath(path, QBrush(self._wipe_gradient(grad, x, w, edge, feather)))
+                    continue
                 if t >= word.end:
                     fade = _clamp01((t - word.end) / SUNG_FADE)
                     c = _mix(hi1, sung_target, fade)
@@ -1370,6 +1389,35 @@ class OverlayWindow(QWidget):
                                              text_c, glow_c if glow_c is not None else hi1, oa)
                 else:
                     self._draw_text(p, path, text_c, oa)
+
+    def _wipe_sweep(self, line, layout, widths, gaps, space, t: float) -> float:
+        """The wipe's position along the line (pixels in reading order), smoothed from frame to frame."""
+        u0s = {}
+        u = 0.0
+        order = [i for _, placed in layout for i, _ in placed]
+        for i in order:
+            u0s[i] = u
+            u += widths[i] + (space if gaps[i] else 0.0)
+        self._sweep_u0 = u0s
+        first = line.words[order[0]].start if order else 0.0
+        knots = [(first - 0.12, -25.0)]           # glide in from just before the first letter
+        last_t = first
+        for i in order:
+            wd = line.words[i]
+            s0 = max(wd.start, last_t)
+            s1 = max(wd.end, s0 + 0.01)
+            knots += [(s0, u0s[i]), (s1, u0s[i] + widths[i])]
+            last_t = s1
+        target = sweep_target(knots, t)
+        now = time.monotonic()
+        key = (line.start, len(line.words))
+        st = getattr(self, "_sweep_state", None)
+        if st is None or st[0] != key or abs(target - st[1]) > 0.35 * max(u, 1.0) or now - st[2] > 0.25:
+            shown = target                       # new line, a seek, or the first frame: no easing
+        else:
+            shown = follow(st[1], target, now - st[2])
+        self._sweep_state = (key, shown, now)
+        return shown
 
     @staticmethod
     def _wipe_gradient(grad: QLinearGradient, x: float, w: float, edge: float, feather: float):

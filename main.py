@@ -285,6 +285,26 @@ def _schedule_frame_test(app, ctl, out):
                 y += s.height() + 6
             sp.end()
             strip.save(str(out).replace(".json", "-transition.png"))
+            # the wipe in real time: 8 pictures 0.1 s apart, cut to the lyric line
+            ctl.clock.reset(ly.lines[idx].start + 0.3, True)
+            ov._line_idx = idx
+            wipes = []
+            for k in range(48):
+                ctl._tick()
+                img = ov.grab()
+                if k % 6 == 0:
+                    h = img.height()
+                    wipes.append(img.copy(0, int(h * 0.42), img.width(), int(h * 0.3)))
+                _t.sleep(1 / 60)
+            ws = QPixmap(wipes[0].width(), sum(w.height() + 4 for w in wipes))
+            ws.fill()
+            sp = QPainter(ws)
+            y = 0
+            for w in wipes:
+                sp.drawPixmap(0, y, w)
+                y += w.height() + 4
+            sp.end()
+            ws.save(str(out).replace(".json", "-wipe.png"))
         import shutil
 
         from app.diagnostics import make_report

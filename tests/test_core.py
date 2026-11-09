@@ -602,3 +602,22 @@ def test_problem_report_hides_secrets():
     s.deepl_key = "abc:fx"
     d = _sanitised_settings(s)
     assert d["deepl_key"] == "(set)" and d["anthropic_key"] == "" and "abc" not in str(d)
+
+
+def test_wipe_sweeps_continuously_through_the_line():
+    from app.motion import follow, sweep_target
+    # word 1: 0-100 px sung 1.0-1.5 s, space 100-110, word 2: 110-150 px sung 1.6-2.4 s
+    knots = [(1.0, 0.0), (1.5, 100.0), (1.6, 110.0), (2.4, 150.0)]
+    assert sweep_target(knots, 0.5) == 0.0 and sweep_target(knots, 3.0) == 150.0
+    assert sweep_target(knots, 1.25) == 50.0
+    assert abs(sweep_target(knots, 1.55) - 105.0) < 1e-9          # flows through the space, no jump
+    xs = [sweep_target(knots, 1.0 + k * 0.01) for k in range(141)]
+    assert all(b >= a for a, b in zip(xs, xs[1:]))                 # never goes backwards
+    # following smooths a sudden speed change: no single frame moves more than the target did
+    shown, prev = 0.0, 0.0
+    for k in range(1, 200):
+        t = 1.0 + k / 60
+        shown = follow(shown, sweep_target(knots, t), 1 / 60)
+        assert shown >= prev - 1e-9
+        prev = shown
+    assert abs(shown - 150.0) < 0.5

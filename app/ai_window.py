@@ -378,7 +378,7 @@ class AiSyncWindow(QWidget):
         has_words = bool(not e.get("failed") and d and d.get("words") and e.get("path"))
         self.rematch_btn.setVisible(has_words)
         self.missed_btn.setVisible(has_words and not all(
-            h for t, h in zip(d["lines"], d["heard"]) if t.strip()) if has_words and d.get("heard") else False)
+            h for t, h in zip(d["lines"], d.get("heard") or []) if t.strip()) if has_words and d.get("heard") else False)
         head = (f"<p style='font-size:16px; font-weight:600; color:#ffffff'>{html.escape(e['title'])}</p>"
                 f"<p style='color:#9a9ab0'>{html.escape(e.get('note') or '')}</p>")
         if not d or not d.get("lines"):
@@ -390,7 +390,7 @@ class AiSyncWindow(QWidget):
         missed = 0
         lp = d.get("last_patch") or {}
         new = set(lp.get("new") or [])
-        for n, (text, heard) in enumerate(zip(d["lines"], d["heard"] + [False] * (len(d["lines"]) - len(d["heard"])))):
+        for n, (text, heard) in enumerate(zip(d["lines"], (d.get("heard") or []) + [False] * (len(d["lines"]) - len(d.get("heard") or [])))):
             if not text.strip():
                 rows.append("<tr><td colspan='2' height='8'></td></tr>")
                 continue
